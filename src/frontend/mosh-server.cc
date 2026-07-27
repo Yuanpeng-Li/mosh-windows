@@ -742,7 +742,7 @@ static void serve( int host_fd,
 
       /* poll for events */
       sel.clear_fds();
-      std::vector<int> fd_list( network.fds() );
+      std::vector<Network::socket_t> fd_list( network.fds() );
       assert( fd_list.size() == 1 ); /* servers don't hop */
       int network_fd = fd_list.back();
       sel.add_fd( network_fd );

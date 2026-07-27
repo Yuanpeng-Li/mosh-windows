@@ -42,10 +42,8 @@
 #include <string>
 #include <vector>
 
-#include <netinet/in.h>
-#include <sys/socket.h>
-
 #include "src/crypto/crypto.h"
+#include "src/network/socketio.h"
 
 using namespace Crypto;
 
@@ -66,8 +64,12 @@ private:
   std::string my_what;
 
 public:
+  /* the_errno is a socket error -- errno on POSIX, a Winsock code on Windows
+     -- so it is formatted by the socket layer rather than by strerror. Callers
+     that already have a message pass 0. */
   NetworkException( std::string s_function = "<none>", int s_errno = 0 )
-    : function( s_function ), the_errno( s_errno ), my_what( function + ": " + strerror( the_errno ) )
+    : function( s_function ), the_errno( s_errno ),
+      my_what( s_errno == 0 ? s_function : ( s_function + ": " + socket_strerror( s_errno ) ) )
   {}
   const char* what() const throw() { return my_what.c_str(); }
   ~NetworkException() throw() {}
@@ -152,18 +154,34 @@ private:
 
   bool try_bind( const char* addr, int port_low, int port_high );
 
+  /* Move-only. It used to be copyable, with the copy constructor calling
+     dup() and the assignment operator dup2()-ing another descriptor on top of
+     this one -- which aliases two objects onto one socket and has no sensible
+     Windows equivalent. Nothing needs a second reference to a socket; the
+     deque only ever moves them. */
   class Socket
   {
   private:
-    int _fd;
+    socket_t _fd;
 
   public:
-    int fd( void ) const { return _fd; }
-    Socket( int family );
+    socket_t fd( void ) const { return _fd; }
+    explicit Socket( int family );
     ~Socket();
 
-    Socket( const Socket& other );
-    Socket& operator=( const Socket& other );
+    Socket( Socket&& other ) noexcept : _fd( other._fd ) { other._fd = BAD_SOCKET; }
+    Socket& operator=( Socket&& other ) noexcept
+    {
+      if ( this != &other ) {
+        close_socket( _fd );
+        _fd = other._fd;
+        other._fd = BAD_SOCKET;
+      }
+      return *this;
+    }
+
+    Socket( const Socket& ) = delete;
+    Socket& operator=( const Socket& ) = delete;
   };
 
   std::deque<Socket> socks;
@@ -200,7 +218,7 @@ private:
 
   void hop_port( void );
 
-  int sock( void ) const
+  socket_t sock( void ) const
   {
     assert( !socks.empty() );
     return socks.back().fd();
@@ -208,7 +226,7 @@ private:
 
   void prune_sockets( void );
 
-  std::string recv_one( int sock_to_recv );
+  std::string recv_one( socket_t sock_to_recv );
 
   void set_MTU( int family );
 
@@ -221,7 +239,7 @@ public:
 
   void send( const std::string& s );
   std::string recv( void );
-  const std::vector<int> fds( void ) const;
+  const std::vector<socket_t> fds( void ) const;
   int get_MTU( void ) const { return MTU; }
 
   std::string port( void ) const;

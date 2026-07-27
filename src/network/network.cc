@@ -36,14 +36,8 @@
 #include <cerrno>
 #include <cstring>
 
-#include <sys/socket.h>
-#include <sys/types.h>
-#ifdef HAVE_SYS_UIO_H
-#include <sys/uio.h>
-#endif
-#include <netdb.h>
-#include <netinet/in.h>
-#include <unistd.h>
+/* The sockets API arrives through src/network/socketio.h, included by
+   network.h -- this file makes no operating system calls of its own. */
 
 #include "src/crypto/byteorder.h"
 #include "src/crypto/crypto.h"
@@ -147,34 +141,11 @@ void Connection::prune_sockets( void )
   }
 }
 
-Connection::Socket::Socket( int family ) : _fd( socket( family, SOCK_DGRAM, 0 ) )
+Connection::Socket::Socket( int family ) : _fd( udp_socket( family ) )
 {
-  if ( _fd < 0 ) {
-    throw NetworkException( "socket", errno );
+  if ( _fd == BAD_SOCKET ) {
+    throw NetworkException( "socket", last_socket_error() );
   }
-
-  /* Disable path MTU discovery */
-#ifdef HAVE_IP_MTU_DISCOVER
-  int flag = IP_PMTUDISC_DONT;
-  if ( setsockopt( _fd, IPPROTO_IP, IP_MTU_DISCOVER, &flag, sizeof flag ) < 0 ) {
-    throw NetworkException( "setsockopt", errno );
-  }
-#endif
-
-  //  int dscp = 0x92; /* OS X does not have IPTOS_DSCP_AF42 constant */
-  int dscp = 0x02; /* ECN-capable transport only */
-  if ( setsockopt( _fd, IPPROTO_IP, IP_TOS, &dscp, sizeof dscp ) < 0 ) {
-    //    perror( "setsockopt( IP_TOS )" );
-  }
-
-  /* request explicit congestion notification on received datagrams */
-#ifdef HAVE_IP_RECVTOS
-  int tosflag = true;
-  if ( setsockopt( _fd, IPPROTO_IP, IP_RECVTOS, &tosflag, sizeof tosflag ) < 0
-       && family == IPPROTO_IP ) { /* FreeBSD disallows this option on IPv6 sockets. */
-    perror( "setsockopt( IP_RECVTOS )" );
-  }
-#endif
 }
 
 void Connection::setup( void )
@@ -182,9 +153,9 @@ void Connection::setup( void )
   last_port_choice = timestamp();
 }
 
-const std::vector<int> Connection::fds( void ) const
+const std::vector<socket_t> Connection::fds( void ) const
 {
-  std::vector<int> ret;
+  std::vector<socket_t> ret;
 
   for ( std::deque<Socket>::const_iterator it = socks.begin(); it != socks.end(); it++ ) {
     ret.push_back( it->fd() );
@@ -270,7 +241,7 @@ Connection::Connection( const char* desired_ip, const char* desired_port ) /* se
     throw; /* this time it's fatal */
   }
 
-  throw NetworkException( "Could not bind", errno );
+  throw NetworkException( "Could not bind", last_socket_error() );
 }
 
 bool Connection::try_bind( const char* addr, int port_low, int port_high )
@@ -311,8 +282,8 @@ bool Connection::try_bind( const char* addr, int port_low, int port_high )
     if ( local_addr.sa.sa_family == AF_INET6
          && memcmp( &local_addr.sin6.sin6_addr, &in6addr_any, sizeof( in6addr_any ) ) == 0 ) {
       const int off = 0;
-      if ( setsockopt( sock(), IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof( off ) ) ) {
-        perror( "setsockopt( IPV6_V6ONLY, off )" );
+      if ( !set_dual_stack( sock() ) ) {
+        fprintf( stderr, "setsockopt( IPV6_V6ONLY, off ): %s\n", socket_strerror( last_socket_error() ).c_str() );
       }
     }
 
@@ -321,7 +292,7 @@ bool Connection::try_bind( const char* addr, int port_low, int port_high )
       return true;
     } // else fallthrough to below code, on last iteration.
   }
-  int saved_errno = errno;
+  int saved_errno = last_socket_error();
   socks.pop_back();
   char host[NI_MAXHOST], serv[NI_MAXSERV];
   int errcode = getnameinfo( &local_addr.sa,
@@ -374,14 +345,15 @@ void Connection::send( const std::string& s )
 
   std::string p = session.encrypt( px.toMessage() );
 
-  ssize_t bytes_sent = sendto( sock(), p.data(), p.size(), MSG_DONTWAIT, &remote_addr.sa, remote_addr_len );
+  ssize_t bytes_sent = udp_send( sock(), p.data(), p.size(), &remote_addr.sa, remote_addr_len );
 
   if ( bytes_sent != static_cast<ssize_t>( p.size() ) ) {
     /* Make sendto() failure available to the frontend. */
     send_error = "sendto: ";
-    send_error += strerror( errno );
+    const int send_errno = last_socket_error();
+    send_error += socket_strerror( send_errno );
 
-    if ( errno == EMSGSIZE ) {
+    if ( err_is_msgsize( send_errno ) ) {
       MTU = DEFAULT_SEND_MTU; /* payload MTU of last resort */
     }
   }
@@ -407,7 +379,7 @@ std::string Connection::recv( void )
     try {
       payload = recv_one( it->fd() );
     } catch ( NetworkException& e ) {
-      if ( ( e.the_errno == EAGAIN ) || ( e.the_errno == EWOULDBLOCK ) ) {
+      if ( err_is_transient_recv( e.the_errno ) ) {
         continue;
       } else {
         throw;
@@ -421,58 +393,25 @@ std::string Connection::recv( void )
   throw NetworkException( "No packet received" );
 }
 
-std::string Connection::recv_one( int sock_to_recv )
+std::string Connection::recv_one( socket_t sock_to_recv )
 {
-  /* receive source address, ECN, and payload in msghdr structure */
   Addr packet_remote_addr;
-  struct msghdr header;
-  struct iovec msg_iovec;
-
   char msg_payload[Session::RECEIVE_MTU];
-  char msg_control[Session::RECEIVE_MTU];
 
-  /* receive source address */
-  header.msg_name = &packet_remote_addr;
-  header.msg_namelen = sizeof packet_remote_addr;
+  socklen_type addrlen = sizeof packet_remote_addr;
+  bool congestion_experienced = false;
+  bool truncated = false;
 
-  /* receive payload */
-  msg_iovec.iov_base = msg_payload;
-  msg_iovec.iov_len = sizeof msg_payload;
-  header.msg_iov = &msg_iovec;
-  header.msg_iovlen = 1;
-
-  /* receive explicit congestion notification */
-  header.msg_control = msg_control;
-  header.msg_controllen = sizeof msg_control;
-
-  /* receive flags */
-  header.msg_flags = 0;
-
-  ssize_t received_len = recvmsg( sock_to_recv, &header, MSG_DONTWAIT );
+  const ssize_t received_len = udp_recv( sock_to_recv, msg_payload, sizeof msg_payload, &packet_remote_addr.sa,
+                                         &addrlen, &congestion_experienced, &truncated );
 
   if ( received_len < 0 ) {
-    throw NetworkException( "recvmsg", errno );
+    throw NetworkException( "recvmsg", last_socket_error() );
   }
 
-  if ( header.msg_flags & MSG_TRUNC ) {
-    throw NetworkException( "Received oversize datagram", errno );
-  }
-
-  /* receive ECN */
-  bool congestion_experienced = false;
-
-  struct cmsghdr* ecn_hdr = CMSG_FIRSTHDR( &header );
-  if ( ecn_hdr && ecn_hdr->cmsg_level == IPPROTO_IP
-       && ( ecn_hdr->cmsg_type == IP_TOS
-#ifdef IP_RECVTOS
-            || ecn_hdr->cmsg_type == IP_RECVTOS
-#endif
-            ) ) {
-    /* got one */
-    uint8_t* ecn_octet_p = (uint8_t*)CMSG_DATA( ecn_hdr );
-    assert( ecn_octet_p );
-
-    congestion_experienced = ( *ecn_octet_p & 0x03 ) == 0x03;
+  if ( truncated ) {
+    /* The receive itself succeeded, so there is no socket error to report. */
+    throw NetworkException( "Received oversize datagram", 0 );
   }
 
   Packet p( session.decrypt( msg_payload, received_len ) );
@@ -524,10 +463,10 @@ std::string Connection::recv_one( int sock_to_recv )
   last_heard = timestamp();
 
   if ( server && /* only client can roam */
-       ( remote_addr_len != header.msg_namelen
+       ( remote_addr_len != addrlen
          || memcmp( &remote_addr, &packet_remote_addr, remote_addr_len ) != 0 ) ) {
     remote_addr = packet_remote_addr;
-    remote_addr_len = header.msg_namelen;
+    remote_addr_len = addrlen;
     char host[NI_MAXHOST], serv[NI_MAXSERV];
     int errcode = getnameinfo( &remote_addr.sa,
                                remote_addr_len,
@@ -547,10 +486,10 @@ std::string Connection::recv_one( int sock_to_recv )
 std::string Connection::port( void ) const
 {
   Addr local_addr;
-  socklen_t addrlen = sizeof( local_addr );
+  socklen_type addrlen = sizeof( local_addr );
 
   if ( getsockname( sock(), &local_addr.sa, &addrlen ) < 0 ) {
-    throw NetworkException( "getsockname", errno );
+    throw NetworkException( "getsockname", last_socket_error() );
   }
 
   char serv[NI_MAXSERV];
@@ -602,23 +541,7 @@ uint64_t Connection::timeout( void ) const
 
 Connection::Socket::~Socket()
 {
-  fatal_assert( close( _fd ) == 0 );
-}
-
-Connection::Socket::Socket( const Socket& other ) : _fd( dup( other._fd ) )
-{
-  if ( _fd < 0 ) {
-    throw NetworkException( "socket", errno );
-  }
-}
-
-Connection::Socket& Connection::Socket::operator=( const Socket& other )
-{
-  if ( dup2( other._fd, _fd ) < 0 ) {
-    throw NetworkException( "socket", errno );
-  }
-
-  return *this;
+  close_socket( _fd );
 }
 
 bool Connection::parse_portrange( const char* desired_port, int& desired_port_low, int& desired_port_high )
