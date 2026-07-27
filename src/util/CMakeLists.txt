@@ -23,7 +23,8 @@ if(WIN32)
   list(APPEND _moshutil_sources
     swrite_win32.cc       swrite.h
     locale_utils_win32.cc locale_utils.h
-    select_win32.cc       select.h)
+    select_win32.cc       select.h
+    console_win32.cc      console.h)
   # pty_compat is still missing: forkpty and ioctl, which the ConPTY host
   # replaces.
 else()
@@ -31,6 +32,7 @@ else()
     swrite.cc       swrite.h
     locale_utils.cc locale_utils.h
     select.cc       select.h
+    console_posix.cc console.h
     pty_compat.cc   pty_compat.h)
 endif()
 

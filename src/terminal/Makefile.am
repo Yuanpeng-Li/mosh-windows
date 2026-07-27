@@ -7,3 +7,5 @@ libmoshterminal_a_SOURCES = parseraction.cc parseraction.h parser.cc parser.h pa
 
 # Ship the peer CMake build in the dist tarball.
 EXTRA_DIST = CMakeLists.txt
+
+EXTRA_DIST = CMakeLists.txt terminaldisplayinit_win32.cc

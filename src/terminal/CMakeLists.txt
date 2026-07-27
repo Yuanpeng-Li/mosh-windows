@@ -15,7 +15,9 @@ set(_moshterminal_sources
   terminalfunctions.cc
   terminaluserinput.cc terminaluserinput.h)
 
-if(NOT WIN32)
+if(WIN32)
+  list(APPEND _moshterminal_sources terminaldisplayinit_win32.cc)
+else()
   list(APPEND _moshterminal_sources terminaldisplayinit.cc)
 endif()
 
