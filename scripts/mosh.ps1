@@ -65,6 +65,8 @@ Usage: $ProgName [options] [--] [user@]host [command...]
                                 (default: "C.UTF-8"; Windows has no LANG, and
                                  mosh-server requires a UTF-8 locale)
 
+        --setup              download a mosh-client and install it beside this
+                                script, then exit
         --help               this message
         --version            version and copyright information
 
@@ -79,6 +81,67 @@ License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>.
 This is free software: you are free to change and redistribute it.
 There is NO WARRANTY, to the extent permitted by law.
 "@
+
+# The mosh-client --setup fetches. Pinned by digest: an unpinned download is
+# an unreviewed binary from the internet, and this one terminates an encrypted
+# session. Deliberately downloaded from its own project rather than
+# redistributed here -- MoshCatty is somebody else's GPLv3 work, and shipping
+# their binary would put the obligation to supply matching source on us.
+$ClientRelease = @{
+    Name    = 'MoshCatty'
+    Version = 'moshcatty-0.1.8'
+    Url     = 'https://github.com/binaricat/MoshCatty/releases/download/moshcatty-0.1.8/mosh-client-win32-x64.tar.gz'
+    Sha256  = 'EE437592C351361E47C600FAFE04CE97A2551AA61FBEF1FB3D6DDA565835311E'
+    Home    = 'https://github.com/binaricat/MoshCatty'
+}
+
+function Invoke-Setup([string] $destDir) {
+    $exe = Join-Path $destDir 'mosh-client.exe'
+    if (Test-Path -LiteralPath $exe) {
+        Write-Output "mosh-client is already installed at $exe"
+        Write-Output "Delete it first if you want to replace it."
+        return 0
+    }
+
+    Write-Output "Fetching $($ClientRelease.Name) $($ClientRelease.Version)"
+    Write-Output "  from $($ClientRelease.Url)"
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("mosh-client-" + [System.Guid]::NewGuid().ToString('N') + '.tar.gz')
+    try {
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        } catch { }
+        Invoke-WebRequest -Uri $ClientRelease.Url -OutFile $tmp -UseBasicParsing
+    } catch {
+        [Console]::Error.WriteLine("mosh: download failed: $_")
+        return 1
+    }
+
+    $got = (Get-FileHash -LiteralPath $tmp -Algorithm SHA256).Hash
+    if ($got -ne $ClientRelease.Sha256) {
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        [Console]::Error.WriteLine("mosh: SHA-256 mismatch, refusing to install.")
+        [Console]::Error.WriteLine("  expected $($ClientRelease.Sha256)")
+        [Console]::Error.WriteLine("  got      $got")
+        return 1
+    }
+    Write-Output "  SHA-256 verified"
+
+    if (-not (Test-Path -LiteralPath $destDir)) {
+        New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+    }
+    & tar.exe -xzf $tmp -C $destDir 2>&1 | Out-Null
+    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+
+    if (-not (Test-Path -LiteralPath $exe)) {
+        [Console]::Error.WriteLine("mosh: extraction did not produce $exe")
+        return 1
+    }
+    Write-Output "Installed $exe"
+    Write-Output ""
+    Write-Output "$($ClientRelease.Name) is a separate GPLv3 project: $($ClientRelease.Home)"
+    Write-Output "Try it:  mosh user@host"
+    return 0
+}
 
 function Write-Usage-And-Exit([int] $code) {
     if ($code -eq 0) { Write-Output $Usage } else { [Console]::Error.WriteLine($Usage) }
@@ -160,6 +223,7 @@ while ($i -lt $argv.Count) {
     switch -CaseSensitive ($name) {
         '--help'      { Write-Usage-And-Exit 0 }
         '--version'   { Write-Output $VersionMessage; exit 0 }
+        '--setup'     { exit (Invoke-Setup (Split-Path -Parent $PSCommandPath)) }
         '--client'    { $client   = if ($hasVal) { $val } else { Next-Value $name } }
         '--server'    { $server   = if ($hasVal) { $val } else { Next-Value $name } }
         '--predict'   { $predict  = if ($hasVal) { $val } else { Next-Value $name } }
@@ -258,7 +322,12 @@ function Find-MoshClient([string] $want) {
     Die @"
 Cannot find mosh-client.
 
-Looked at: --client, `$env:MOSH_CLIENT, next to this script, and PATH.
+Run:  mosh --setup
+
+That downloads one and verifies it against a pinned SHA-256. Or point --client
+at your own, or set MOSH_CLIENT.
+
+(Looked at: --client, `$env:MOSH_CLIENT, beside this script, and PATH.)
 "@
 }
 $clientPath = Find-MoshClient $client

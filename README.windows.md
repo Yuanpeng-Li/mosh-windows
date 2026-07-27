@@ -1,136 +1,226 @@
-Native Windows port of Mosh
-===========================
+mosh for Windows
+================
 
-This is a fork of [mobile-shell/mosh](https://github.com/mobile-shell/mosh)
-that is being ported to run natively on Windows: MSVC, CMake and vcpkg, with
-`mosh-server` hosting a PowerShell session through the Windows Pseudo Console
-(ConPTY). No Cygwin, no MinGW runtime, no WSL.
+`mosh user@host`, natively on Windows. No Cygwin, no WSL, no MSYS2.
 
-The interesting half is the **server**. A native Windows Mosh *client* already
-exists — see [Prior art](#prior-art) — but as far as I can find, nothing lets
-you `mosh` *into* a Windows machine and get a PowerShell session that survives
-sleep, roaming and network loss. That is what this is for.
+[Mosh](https://mosh.org) is a remote terminal that survives sleep, roaming and
+packet loss, and echoes your typing locally so a laggy link still feels
+responsive. It has never had a native Windows build. This fork is porting it.
+
+Two halves, at very different stages:
+
+| | |
+|---|---|
+| **Connecting out** — `mosh user@host` from Windows to a Linux/macOS server | **works today**, see below |
+| **Connecting in** — `mosh` *into* Windows and get a PowerShell session | in progress; nothing like it exists yet |
+
+---
+
+Install
+-------
+
+### One line
+
+```powershell
+irm https://raw.githubusercontent.com/Yuanpeng-Li/mosh-windows/windows/scripts/install.ps1 | iex
+```
+
+Installs into `%LOCALAPPDATA%\Programs\mosh`, adds that one directory to your
+**user** PATH, and downloads a `mosh-client.exe`. No admin, nothing written
+anywhere else.
+
+Then open a **new** terminal:
+
+```powershell
+mosh user@host
+```
+
+### winget
+
+```powershell
+winget install YuanpengLi.Mosh
+mosh --setup          # fetches mosh-client.exe on first use
+```
+
+> The winget package contains the launcher only. It does not bundle
+> `mosh-client.exe`, because that binary belongs to another project
+> ([MoshCatty](https://github.com/binaricat/MoshCatty), GPLv3) and
+> redistributing it would put the obligation to supply matching source on us.
+> `mosh --setup` downloads it from its own release and checks it against a
+> pinned SHA-256.
+
+### By hand
+
+Drop [`scripts/mosh.ps1`](scripts/mosh.ps1) and
+[`scripts/mosh.cmd`](scripts/mosh.cmd) in a directory on your PATH, then run
+`mosh --setup`.
+
+### Uninstall
+
+```powershell
+mosh-uninstall
+```
+
+---
+
+Use
+---
+
+Exactly as on Linux and macOS — the options are the same ones, spelled the
+same way:
+
+```powershell
+mosh user@host                      # ssh_config aliases work too: mosh myserver
+mosh -p 60000:60010 user@host       # pin the UDP port range
+mosh --predict=always user@host     # local echo even on a fast link
+mosh --ssh="ssh -p 2222" user@host  # non-standard ssh port
+mosh user@host -- tmux attach       # run something instead of a login shell
+mosh --help
+```
+
+Windows-only additions:
+
+```powershell
+mosh --locale=en_US.UTF-8 user@host  # Windows has no LANG; C.UTF-8 by default
+mosh --setup                          # download and verify a mosh-client
+```
+
+Two differences from upstream, both reported by `--help`:
+
+- `--experimental-remote-ip=proxy` is refused. It works by re-invoking the
+  launcher as an ssh `ProxyCommand`, and Win32 OpenSSH runs `ProxyCommand`
+  through `cmd.exe`, whose quoting is not `sh`'s. The default here is `remote`,
+  which asks the server for its address via `$SSH_CONNECTION`.
+- `--local` needs a native `mosh-server`, which does not exist yet.
+
+### On the server
+
+Just mosh, from your distribution — nothing from this project:
+
+```sh
+apt install mosh        # Debian, Ubuntu
+dnf install mosh        # Fedora, RHEL
+brew install mosh       # macOS
+```
+
+The server needs inbound **UDP 60000–61000** open. Most VPS firewalls block it
+by default:
+
+```sh
+sudo ufw allow 60000:61000/udp
+```
+
+---
+
+Troubleshooting
+---------------
+
+**`Did not find a 'MOSH CONNECT' line`**
+`mosh-server` is not on the remote PATH, or the remote locale is not UTF-8, or
+something in the remote shell's startup files printed first. Check with
+`ssh user@host mosh-server --version`, and try `--locale=en_US.UTF-8`.
+
+**`Nothing received from server on UDP port 60001`**
+ssh worked and the server started, but its UDP replies are not arriving. Almost
+always a firewall between you and the host. Note the port range, not just one
+port — mosh hops ports while roaming.
+
+**`mosh: Cannot find mosh-client`**
+Run `mosh --setup`, or point `--client` at your own build.
+
+**Chinese, Japanese or emoji are misaligned**
+Client and server must agree on how wide each character is. If they disagree,
+everything after the first wide character shifts. Please
+[open an issue](https://github.com/Yuanpeng-Li/mosh-windows/issues) with the
+exact text — this is the failure mode the native client is being built to fix.
+
+**The prompt redraws oddly, or local echo never engages**
+Try `mosh --predict=never user@host`. If that fixes it, the prediction engine is
+disagreeing with your shell's redraw behaviour; an issue with your shell and
+prompt would be useful.
+
+---
 
 Status
 ------
 
-**Not usable yet.** What exists today:
+**Working now.** `mosh user@host` from Windows, with the full upstream
+command-line interface. Verified end to end against a Linux host: ssh
+bootstrap, session key handoff, live shell with colour and title.
 
-| | |
-|---|---|
-| CMake build, Linux | works; passes the full automake suite (30 PASS / 2 XFAIL / 0 FAIL) and ctest 4/4 |
-| CMake build, Windows/MSVC | configures; the protobuf library builds and links |
-| Everything else on Windows | not written |
+The launcher is this project's code. The client it drives is currently
+[MoshCatty](https://github.com/binaricat/MoshCatty), an independent Rust
+reimplementation of the mosh protocol. It is not a port of mosh's own terminal
+emulator, so its rendering may differ from real mosh in corners — wide
+characters and heavy TUI applications are worth watching.
 
-The autotools build is untouched and still the way to build on Unix.
+**Being built.**
 
-Why not upstream
-----------------
+- `mosh-client.exe` from mosh's actual C++ source, so behaviour matches upstream
+  exactly. The launcher already prefers a `mosh-client.exe` sitting next to it,
+  so this will be a drop-in swap with no configuration change.
+- `mosh-server.exe`, hosting PowerShell through the Windows Pseudo Console. This
+  is the part nobody has done. See
+  [docs/windows-port-notes.md](docs/windows-port-notes.md) for what has been
+  measured so far.
 
-These changes are not being sent to upstream Mosh, for reasons upstream has
-stated plainly:
+**Build it yourself.**
 
-* [PR #1269](https://github.com/mobile-shell/mosh/pull/1269) — an earlier and
-  more conservative Windows patch (MinGW, reusing the existing autotools
-  build) was closed unmerged in 2023: *"I do not believe the mosh maintainers
-  are currently interested in supporting a native win32 build. We recommend
-  using mosh in WSL."*
-* [PR #1322](https://github.com/mobile-shell/mosh/pull/1322) — a two-line fix
-  was closed 45 minutes after it was opened: *"We have no CI to ensure this
+```powershell
+cmake -S . -B build -G Ninja `
+  -DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake `
+  -DVCPKG_TARGET_TRIPLET=x64-windows-static-md
+cmake --build build
+```
+
+The CMake build also works on Linux, which is how it is validated without a
+Windows machine. The autotools build is untouched and remains the way to build
+on Unix.
+
+---
+
+Why a fork
+----------
+
+Upstream has declined this, in writing, twice:
+
+- [PR #1269](https://github.com/mobile-shell/mosh/pull/1269), an earlier and
+  more conservative Windows patch, closed in 2023: *"I do not believe the mosh
+  maintainers are currently interested in supporting a native win32 build. We
+  recommend using mosh in WSL."*
+- [PR #1322](https://github.com/mobile-shell/mosh/pull/1322), a two-line fix,
+  closed 45 minutes after it was opened: *"We have no CI to ensure this
   continues to work, so we will not be merging this fix."* Upstream CI runs
-  macOS and Ubuntu only, so that objection applies permanently to anything
+  macOS and Ubuntu only, so that reasoning applies permanently to anything
   Windows-shaped.
 
-This fork exists to do the work, not to disagree with that decision. Upstream
-is treated as read-only and rebased onto; commits are kept small and
-POSIX-clean where possible so individual fixes stay cherry-pickable if upstream
-ever wants them.
+This fork exists to do the work, not to argue with that. Upstream is treated as
+read-only and rebased onto, and commits are kept POSIX-clean where possible so
+individual fixes stay cherry-pickable if upstream ever wants them.
 
-What has been established on real hardware
-------------------------------------------
+---
 
-These were measured on Windows 11 (build 26200, MSVC 14.44), not taken from
-documentation, and each one is a trap that costs days if you meet it late.
+Alternatives
+------------
 
-**ConPTY does not give the child its standard handles.** A process launched
-with `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE` *attaches* to the pseudoconsole —
-`GetConsoleWindow()` is non-NULL and the pty's conhost sets its title from the
-child image — but `CreateProcess` still populates the child's standard handles
-from the parent's. If the parent's stdout is a pipe (which it is under sshd),
-the child writes there and the pty stream contains only ConPTY's own
-initialisation sequences. The fix is `STARTF_USESTDHANDLES` with all three
-handles NULL. `CREATE_NO_WINDOW` breaks it again — the child then lands on a
-different, default-sized console.
+If you only want a mosh **client** on Windows and do not care whose:
 
-**Windows OpenSSH puts session processes in a kill-on-close job object.**
-Measured `LimitFlags = 0x2800`: `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` set,
-`JOB_OBJECT_LIMIT_BREAKAWAY_OK` set. A detached child without breakaway died
-about a second after ssh disconnected; with `CREATE_BREAKAWAY_FROM_JOB` it
-survived. Since surviving disconnection is the entire point of Mosh, this is
-not optional. Breakaway is permitted here but is not contractual, so the code
-has to handle `ERROR_ACCESS_DENIED` and say which path it took.
+- [MoshCatty](https://github.com/binaricat/MoshCatty) — the client this project
+  currently uses. Also usable directly.
+- [Netcatty](https://github.com/binaricat/Netcatty) — a GUI SSH client with mosh
+  built in.
+- Chrome Secure Shell, Termius, and Blink on iOS all ship mosh clients.
 
-**`wchar_t` is 16 bits under MSVC, and Mosh stores one code point per
-`wchar_t`.** `U+1F600` stored and read back yields `U+F600`. Worse than
-mojibake: `wcrtomb` returns `(size_t)-1` for a lone surrogate, and
-`terminalframebuffer.h` then does `contents.insert(contents.end(), tmp, tmp +
-len)`. The first emoji can corrupt the heap. The internal character type has to
-become `char32_t` before any of the terminal code is touched.
+None of them can act as a mosh **server** on Windows.
 
-**POSIX errno constants do not match Winsock error codes.** In the MSVC CRT
-`EWOULDBLOCK` is 140, while `WSAGetLastError()` returns `WSAEWOULDBLOCK` =
-10035. `network.cc`'s `(e == EAGAIN || e == EWOULDBLOCK)` therefore compiles
-cleanly and is always false. Windows also reports ICMP port-unreachable as
-`WSAECONNRESET` on the next receive from an *unconnected* UDP socket, which
-POSIX Mosh never sees; `SIO_UDP_CONNRESET` has to be turned off on every
-socket, including the ones created by port hopping.
-
-**Console resize events report the buffer, not the window.** In VT input mode
-`WINDOW_BUFFER_SIZE_EVENT` still arrives through `ReadConsoleInputW`, so it can
-stand in for `SIGWINCH` — but its payload was 120x9001 where the window was
-120x30. The terminal size has to come from `GetConsoleScreenBufferInfo`'s
-`srWindow`, not from the event.
-
-Building
---------
-
-Linux, to validate CMake changes without a Windows machine:
-
-    cmake -S . -B build -G Ninja
-    cmake --build build
-    ctest --test-dir build
-
-Windows, with Visual Studio Build Tools and a vcpkg checkout:
-
-    cmake -S . -B build -G Ninja ^
-      -DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake ^
-      -DVCPKG_TARGET_TRIPLET=x64-windows-static-md
-    cmake --build build
-
-In-source builds are refused: they would write over the autotools Makefiles and
-`src/include/config.h`.
-
-Prior art
----------
-
-For the **client** side on Windows, use one of these rather than waiting for
-this fork:
-
-* [MoshCatty](https://github.com/binaricat/MoshCatty) — a pure-Rust Mosh client,
-  wire-compatible with stock `mosh-server`, shipping static-CRT Windows
-  binaries. It is the engine behind the
-  [Netcatty](https://github.com/binaricat/Netcatty) SSH client.
-* Chrome Secure Shell, Termius, and Blink on iOS all ship Mosh clients.
-
-None of them provide a Windows `mosh-server`.
+---
 
 Credits and license
 -------------------
 
-Mosh is by Keith Winstein and the Mosh developers; see `AUTHORS` and `THANKS`.
+Mosh is by Keith Winstein and the Mosh developers — see `AUTHORS` and `THANKS`.
 This fork adds a Windows port on top of their work and claims nothing else.
 
-GPL v3, as upstream, with upstream's OpenSSL linking exception preserved. See
-`COPYING`. Files modified here are marked as changed in the git history; this
-file records that this tree is a modified version of Mosh and is not endorsed
-by or affiliated with the upstream project.
+GPL v3, as upstream, with upstream's OpenSSL linking exception preserved; see
+`COPYING`. Changes are recorded in the git history. This is a modified version
+of Mosh and is not endorsed by or affiliated with the upstream project.
