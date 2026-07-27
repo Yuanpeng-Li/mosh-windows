@@ -19,6 +19,10 @@ add_executable(test-utf8 utf8.cc)
 target_link_libraries(test-utf8 PRIVATE mosh_common moshutil)
 add_test(NAME utf8 COMMAND test-utf8)
 
+add_executable(test-uniwidth uniwidth.cc)
+target_link_libraries(test-uniwidth PRIVATE mosh_common moshutil)
+add_test(NAME uniwidth COMMAND test-uniwidth)
+
 add_test(NAME ocb-aes         COMMAND test-ocb-aes)
 add_test(NAME encrypt-decrypt COMMAND test-encrypt-decrypt)
 add_test(NAME nonce-incr      COMMAND test-nonce-incr)

@@ -5,6 +5,7 @@ add_library(moshutil STATIC
   timestamp.cc    timestamp.h
   pty_compat.cc   pty_compat.h
   utf8.cc         utf8.h
+  uniwidth.cc     uniwidth.h      uniwidth_table.h
   dos_assert.h
   fatal_assert.h)
 
