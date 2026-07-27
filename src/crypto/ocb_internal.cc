@@ -115,18 +115,32 @@
 
 /* Compiler-specific intrinsics and fixes: bswap64, ntz                    */
 #if _MSC_VER
+	/* As the comments say, these are C-mode workarounds. This file is compiled
+	   as C++, where defining a macro named "inline" is ill-formed ([macro.names]
+	   /2, for any TU including a standard header -- this one includes several)
+	   and "restrict" is not a keyword at all, so nothing needs the alias; it
+	   appears nowhere below. Worse, leaking a restrict macro breaks any header
+	   included later that legitimately uses MSVC's __declspec(restrict);
+	   <openssl/evp.h> at the bottom of this file does exactly that. */
+	#ifndef __cplusplus
 	#define inline __inline        /* MSVC doesn't recognize "inline" in C */
 	#define restrict __restrict  /* MSVC doesn't recognize "restrict" in C */
+	#endif
     #define __SSE2__   (_M_IX86 || _M_AMD64 || _M_X64)    /* Assume SSE2  */
     #define __SSSE3__  (_M_IX86 || _M_AMD64 || _M_X64)    /* Assume SSSE3 */
 	#include <intrin.h>
 	#pragma intrinsic(_byteswap_uint64, _BitScanForward, memcpy)
 #elif __GNUC__
+	/* Same reasoning as the MSVC branch above: both aliases are C-mode
+	   workarounds, and "inline" is a keyword in C++. GCC tolerates the
+	   redefinition, but it is ill-formed all the same. */
+	#ifndef __cplusplus
 	#ifndef inline
 	#define inline __inline__            /* No "inline" in GCC ansi C mode */
 	#endif
 	#ifndef restrict
 	#define restrict __restrict__      /* No "restrict" in GCC ansi C mode */
+	#endif
 	#endif
 #endif
 
@@ -151,7 +165,19 @@
 #endif
 
 #if _MSC_VER
-	static inline unsigned ntz(unsigned x) {_BitScanForward(&x,x);return x;}
+	/* _BitScanForward takes unsigned long*, which is a distinct type from
+	   unsigned* even though both are 32 bits on Windows. C let the mismatch
+	   through with a warning; C++ rejects it. */
+	static inline unsigned ntz(unsigned x) {
+		/* Initialised because _BitScanForward leaves *index untouched when the
+		   mask is zero. x == 0 is a precondition of every ntz implementation
+		   here (ffs(0)-1 would index L[] out of bounds, __builtin_ctz(0) is
+		   undefined) and is unreachable from mosh, but this keeps the MSVC
+		   path bit-identical to the original at zero for free. */
+		unsigned long index = 0;
+		_BitScanForward(&index, (unsigned long)x);
+		return (unsigned)index;
+	}
 #elif HAVE_DECL___BUILTIN_CTZ
 	#define ntz(x)     __builtin_ctz((unsigned)(x))   /* GCC 3.4+ */
 #elif HAVE_DECL_FFS
