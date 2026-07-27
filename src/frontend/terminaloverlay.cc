@@ -37,6 +37,7 @@
 #include <typeinfo>
 
 #include "src/frontend/terminaloverlay.h"
+#include "src/util/uniwidth.h"
 
 using namespace Overlay;
 
@@ -645,7 +646,7 @@ void PredictionEngine::new_user_byte( char the_byte, const Framebuffer& fb )
 
     /*
     fprintf( stderr, "Action: %s (%lc)\n",
-             act->name().c_str(), act->char_present ? act->ch : L'_' );
+             act->name().c_str(), act->char_present ? act->ch : U'_' );
     */
 
     const std::type_info& type_act = typeid( act );
@@ -656,7 +657,7 @@ void PredictionEngine::new_user_byte( char the_byte, const Framebuffer& fb )
 
       assert( act.char_present );
 
-      wchar_t ch = act.ch;
+      char32_t ch = act.ch;
       /* XXX handle wide characters */
 
       if ( ch == 0x7f ) { /* backspace */
@@ -709,7 +710,7 @@ void PredictionEngine::new_user_byte( char the_byte, const Framebuffer& fb )
             }
           }
         }
-      } else if ( ( ch < 0x20 ) || ( wcwidth( ch ) != 1 ) ) {
+      } else if ( ( ch < 0x20 ) || ( Util::uniwidth( ch ) != 1 ) ) {
         /* unknown print */
         become_tentative();
         //	fprintf( stderr, "Unknown print 0x%x\n", ch );
@@ -806,13 +807,13 @@ void PredictionEngine::new_user_byte( char the_byte, const Framebuffer& fb )
       //      fprintf( stderr, "Escape sequence\n" );
       become_tentative();
     } else if ( type_act == typeid( Parser::CSI_Dispatch ) ) {
-      if ( act.char_present && ( act.ch == L'C' ) ) { /* right arrow */
+      if ( act.char_present && ( act.ch == U'C' ) ) { /* right arrow */
         init_cursor( fb );
         if ( cursor().col < fb.ds.get_width() - 1 ) {
           cursor().col++;
           cursor().expire( local_frame_sent + 1, now );
         }
-      } else if ( act.char_present && ( act.ch == L'D' ) ) { /* left arrow */
+      } else if ( act.char_present && ( act.ch == U'D' ) ) { /* left arrow */
         init_cursor( fb );
 
         if ( cursor().col > 0 ) {

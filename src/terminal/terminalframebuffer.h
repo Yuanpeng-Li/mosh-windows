@@ -42,6 +42,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "src/util/utf8.h"
 
 /* Terminal framebuffer */
 
@@ -174,38 +175,36 @@ public:
   bool compare( const Cell& other ) const;
 
   // Is this a printing ISO 8859-1 character?
-  static bool isprint_iso8859_1( const wchar_t c )
+  static bool isprint_iso8859_1( const char32_t c )
   {
     return ( c <= 0xff && c >= 0xa0 ) || ( c <= 0x7e && c >= 0x20 );
   }
 
-  static void append_to_str( std::string& dest, const wchar_t c )
+  /* These used wcrtomb, which fails -- returning (size_t)-1 -- for anything
+     wchar_t cannot hold. On Windows wchar_t is 16 bits, so that is every code
+     point above U+FFFF, and the length was then used as a pointer offset.
+     Util::utf8_encode cannot fail; it falls back to U+FFFD. */
+  static void append_to_str( std::string& dest, const char32_t c )
   {
     /* ASCII?  Cheat. */
-    if ( static_cast<uint32_t>( c ) <= 0x7f ) {
+    if ( c <= 0x7f ) {
       dest.push_back( static_cast<char>( c ) );
       return;
     }
-    static mbstate_t ps = mbstate_t();
-    char tmp[MB_LEN_MAX];
-    size_t ignore = wcrtomb( NULL, 0, &ps );
-    (void)ignore;
-    size_t len = wcrtomb( tmp, c, &ps );
+    char tmp[Util::UTF8_MAX_LEN];
+    const size_t len = Util::utf8_encode( tmp, c );
     dest.append( tmp, len );
   }
 
-  void append( const wchar_t c )
+  void append( const char32_t c )
   {
     /* ASCII?  Cheat. */
-    if ( static_cast<uint32_t>( c ) <= 0x7f ) {
+    if ( c <= 0x7f ) {
       contents.push_back( static_cast<char>( c ) );
       return;
     }
-    static mbstate_t ps = mbstate_t();
-    char tmp[MB_LEN_MAX];
-    size_t ignore = wcrtomb( NULL, 0, &ps );
-    (void)ignore;
-    size_t len = wcrtomb( tmp, c, &ps );
+    char tmp[Util::UTF8_MAX_LEN];
+    const size_t len = Util::utf8_encode( tmp, c );
     contents.insert( contents.end(), tmp, tmp + len );
   }
 
@@ -408,7 +407,7 @@ class Framebuffer
   // are equal, then the rows are obviously identical.
   // * If no row is shared, the frame has not been modified.
 public:
-  typedef std::vector<wchar_t> title_type;
+  typedef std::vector<char32_t> title_type;
   typedef std::shared_ptr<Row> row_pointer;
   typedef std::vector<row_pointer> rows_type; /* can be either std::vector or std::deque */
 

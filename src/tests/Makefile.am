@@ -39,8 +39,8 @@ displaytests = \
 	unicode-later-combining.test \
 	window-resize.test
 
-check_PROGRAMS = ocb-aes encrypt-decrypt base64 nonce-incr inpty is-utf8-locale utf8 uniwidth
-TESTS = ocb-aes encrypt-decrypt base64 nonce-incr utf8 uniwidth local.test $(displaytests)
+check_PROGRAMS = ocb-aes encrypt-decrypt base64 nonce-incr inpty is-utf8-locale utf8 uniwidth unicode-roundtrip
+TESTS = ocb-aes encrypt-decrypt base64 nonce-incr utf8 uniwidth unicode-roundtrip local.test $(displaytests)
 XFAIL_TESTS = \
 	e2e-failure.test \
 	emulation-attributes-256color8.test
@@ -60,6 +60,10 @@ encrypt_decrypt_LDADD = ../crypto/libmoshcrypto.a ../util/libmoshutil.a $(CRYPTO
 base64_SOURCES = base64.cc base64_vector.cc base64_vector.h genbase64.pl
 base64_CPPFLAGS = $(ocb_aes_CPPFLAGS)
 base64_LDADD = $(ocb_aes_LDADD)
+
+unicode_roundtrip_SOURCES = unicode-roundtrip.cc
+unicode_roundtrip_CPPFLAGS = -I$(srcdir)/../terminal -I$(srcdir)/../util
+unicode_roundtrip_LDADD = ../terminal/libmoshterminal.a ../util/libmoshutil.a $(TINFO_LIBS)
 
 uniwidth_SOURCES = uniwidth.cc
 uniwidth_CPPFLAGS = -I$(srcdir)/../util

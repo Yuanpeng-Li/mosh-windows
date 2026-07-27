@@ -23,6 +23,12 @@ add_executable(test-uniwidth uniwidth.cc)
 target_link_libraries(test-uniwidth PRIVATE mosh_common moshutil)
 add_test(NAME uniwidth COMMAND test-uniwidth)
 
+# The end-to-end character path. Portable on purpose: this is the test that
+# catches the 16-bit wchar_t bug, and it has to be runnable on Windows.
+add_executable(test-unicode-roundtrip unicode-roundtrip.cc)
+target_link_libraries(test-unicode-roundtrip PRIVATE mosh_common moshterminal moshutil)
+add_test(NAME unicode-roundtrip COMMAND test-unicode-roundtrip)
+
 add_test(NAME ocb-aes         COMMAND test-ocb-aes)
 add_test(NAME encrypt-decrypt COMMAND test-encrypt-decrypt)
 add_test(NAME nonce-incr      COMMAND test-nonce-incr)

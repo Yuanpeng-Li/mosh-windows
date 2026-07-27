@@ -42,10 +42,18 @@ class Emulator;
 }
 
 namespace Parser {
+/* What Action::ch holds before one has been set. char_present is the real
+   guard -- every reader of ch either asserts on it or tests it -- so this only
+   needs to be a value that could never be a real character, so that a missing
+   check shows up as obvious nonsense rather than as a plausible one. It cannot
+   be -1 any more: ch is unsigned now, and mosh's own C0/C1 range checks would
+   quietly accept the wraparound. */
+static const char32_t NO_CHAR = 0xFFFFFFFFu;
+
 class Action
 {
 public:
-  wchar_t ch;
+  char32_t ch;
   bool char_present;
 
   virtual std::string name( void ) = 0;
@@ -54,7 +62,7 @@ public:
 
   virtual bool ignore() const { return false; }
 
-  Action() : ch( -1 ), char_present( false ) {};
+  Action() : ch( NO_CHAR ), char_present( false ) {};
   virtual ~Action() {};
 };
 
