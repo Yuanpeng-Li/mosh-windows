@@ -14,4 +14,9 @@ add_library(moshcrypto STATIC
   prng.h)
 
 target_link_libraries(moshcrypto PUBLIC mosh_common OpenSSL::Crypto)
+
+if(WIN32)
+  # BCryptGenRandom, the entropy source in src/crypto/prng.h.
+  target_link_libraries(moshcrypto PUBLIC bcrypt)
+endif()
 add_dependencies(moshcrypto mosh_version)

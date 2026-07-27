@@ -37,7 +37,12 @@
 #include <cstring>
 #include <fstream>
 
+#if defined( _WIN32 )
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
 #include <sys/resource.h>
+#endif
 
 #include "src/crypto/base64.h"
 #include "src/crypto/byteorder.h"
@@ -281,6 +286,36 @@ const Message Session::decrypt( const char* str, size_t len )
   return ret;
 }
 
+#if defined( _WIN32 )
+
+static UINT saved_error_mode;
+
+/* Windows has no core rlimit, and no faithful equivalent.
+ *
+ * Crash dumps are written by Windows Error Reporting, which is controlled by
+ * the machine's policy rather than by the process: if HKLM\...\Windows Error
+ * Reporting\LocalDumps is configured for full dumps, one will be written
+ * whatever this function does, and the session key will be in it. Nothing a
+ * user-mode process can do overrides that.
+ *
+ * So this suppresses what it can -- the crash dialog, and the hard-error
+ * dialogs that would otherwise block a detached mosh-server forever -- and the
+ * residual exposure is documented rather than papered over. Closing it
+ * properly means WerRegisterExcludedMemoryBlock() around the key material,
+ * which is a change to how the key is stored, not to this function.
+ */
+void Crypto::disable_dumping_core( void )
+{
+  saved_error_mode = SetErrorMode( SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX );
+}
+
+void Crypto::reenable_dumping_core( void )
+{
+  SetErrorMode( saved_error_mode );
+}
+
+#else
+
 static rlim_t saved_core_rlimit;
 
 /* Disable dumping core, as a precaution to avoid saving sensitive data
@@ -312,3 +347,5 @@ void Crypto::reenable_dumping_core( void )
     setrlimit( RLIMIT_CORE, &limit );
   }
 }
+
+#endif

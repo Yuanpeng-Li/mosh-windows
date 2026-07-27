@@ -35,13 +35,24 @@
 
 #include "config.h"
 
-#if !defined( HAVE_GETENTROPY ) && !defined( HAVE_GETRANDOM )
+#if defined( _WIN32 )
+/* BCryptGenRandom is the supported way to get entropy on Windows and is what
+   the platform's own CSPRNG is; there is no /dev/urandom to fall back to.
+   Without this mosh would take the urandom branch below, fail to open the
+   file, and refuse to start. */
+#undef HAVE_URANDOM
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <bcrypt.h>
+#elif !defined( HAVE_GETENTROPY ) && !defined( HAVE_GETRANDOM )
 #define HAVE_URANDOM 1
 #else
 #undef HAVE_URANDOM
 #endif
 
+#if !defined( _WIN32 )
 #include <unistd.h>
+#endif
 #ifdef HAVE_SYS_RANDOM_H
 #include <sys/random.h>
 #endif
@@ -87,7 +98,15 @@ public:
       return;
     }
 
-#if defined( HAVE_GETRANDOM )
+#if defined( _WIN32 )
+    /* BCRYPT_USE_SYSTEM_PREFERRED_RNG asks for the system CSPRNG without
+       having to open an algorithm provider first. */
+    const NTSTATUS st = BCryptGenRandom( NULL, static_cast<PUCHAR>( dest ), static_cast<ULONG>( size ),
+                                         BCRYPT_USE_SYSTEM_PREFERRED_RNG );
+    if ( st != 0 ) {
+      throw CryptoException( "BCryptGenRandom failed" );
+    }
+#elif defined( HAVE_GETRANDOM )
     if ( getrandom( dest, size, 0 ) != static_cast<ssize_t>( size ) ) {
       throw CryptoException( "getrandom fell short" );
     }
