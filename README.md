@@ -1,3 +1,8 @@
+> **This is a fork.** It adds a native Windows port (MSVC / CMake / ConPTY)
+> to Mosh. See [README.windows.md](README.windows.md). Upstream Mosh is at
+> https://github.com/mobile-shell/mosh — this tree is a modified version and
+> is not endorsed by or affiliated with the upstream project.
+
 [![ci](https://github.com/mobile-shell/mosh/actions/workflows/ci.yml/badge.svg)](https://github.com/mobile-shell/mosh/actions/workflows/ci.yml)
 
 Mosh: the mobile shell
