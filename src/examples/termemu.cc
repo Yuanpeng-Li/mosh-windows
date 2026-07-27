@@ -187,7 +187,7 @@ static bool tick( Terminal::Framebuffer& state, Terminal::Framebuffer& new_frame
 
   if ( ( !initialized ) || ( diff >= 0.02 ) ) {
     std::string update = display.new_frame( initialized, state, new_frame );
-    swrite( STDOUT_FILENO, update.c_str() );
+    swrite( mosh_stdout_fd(), update.c_str() );
     state = new_frame;
 
     initialized = true;
@@ -243,7 +243,7 @@ static void emulate_terminal( int fd )
   sel.add_fd( fd );
   sel.add_signal( SIGWINCH );
 
-  swrite( STDOUT_FILENO, display.open().c_str() );
+  swrite( mosh_stdout_fd(), display.open().c_str() );
 
   int timeout = -1;
 
@@ -320,7 +320,7 @@ static void emulate_terminal( int fd )
   }
 
   std::string update = display.new_frame( true, state, complete.get_fb() );
-  swrite( STDOUT_FILENO, update.c_str() );
+  swrite( mosh_stdout_fd(), update.c_str() );
 
-  swrite( STDOUT_FILENO, display.close().c_str() );
+  swrite( mosh_stdout_fd(), display.close().c_str() );
 }

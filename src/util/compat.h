@@ -45,4 +45,23 @@
 #define MOSH_UNUSED
 #endif
 
+/* ssize_t is POSIX, not C or C++, and the MSVC CRT does not define it.
+   SSIZE_T from <BaseTsd.h> is the same thing under another name. */
+#if defined( _WIN32 ) && !defined( __MINGW32__ )
+#include <BaseTsd.h>
+typedef SSIZE_T ssize_t;
+#endif
+
+/* What mosh writes bytes to. A small integer on POSIX; a kernel object handle
+   on Windows, where neither the console nor a pipe has a file descriptor
+   unless one is manufactured with _open_osfhandle -- and manufacturing one
+   only to take it apart again in every write would be pure ceremony. */
+#if defined( _WIN32 )
+typedef void* mosh_fd_t; /* HANDLE */
+#define MOSH_BAD_FD ( (mosh_fd_t)(long long)-1 )
+#else
+typedef int mosh_fd_t;
+#define MOSH_BAD_FD ( -1 )
+#endif
+
 #endif

@@ -33,6 +33,22 @@
 #ifndef SWRITE_HPP
 #define SWRITE_HPP
 
-int swrite( int fd, const char* str, ssize_t len = -1 );
+#include "src/util/compat.h"
+
+/* Write the whole buffer, looping over short writes. Returns 0, or -1 having
+   reported the reason.
+
+   Every byte mosh displays and every byte it sends to the host goes through
+   here, over exactly two kinds of destination: the local terminal, and the
+   process at the far end of the pty. On POSIX both are file descriptors; on
+   Windows the first is a console handle and the second a pipe handle, neither
+   of which has a descriptor unless one is manufactured with _open_osfhandle.
+   Hence mosh_fd_t rather than int. */
+int swrite( mosh_fd_t fd, const char* str, ssize_t len = -1 );
+
+/* Where the local terminal is: STDOUT_FILENO on POSIX, the standard output
+   handle on Windows. Call sites named the constant directly, which is not
+   spellable once the type is a handle. */
+mosh_fd_t mosh_stdout_fd( void );
 
 #endif

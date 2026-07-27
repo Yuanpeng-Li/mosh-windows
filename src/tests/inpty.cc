@@ -109,7 +109,7 @@ int main( int argc, char* argv[] )
       perror( "read" );
       return 1;
     }
-    swrite( STDOUT_FILENO, buf, bytes_read );
+    swrite( mosh_stdout_fd(), buf, bytes_read );
   }
 
   int wstatus;

@@ -33,21 +33,44 @@
 #include <cstdio>
 #include <cstring>
 
-#include <unistd.h>
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 
 #include "src/util/swrite.h"
 
+static void report( const char* what )
+{
+  const DWORD err = GetLastError();
+  char buf[256] = { 0 };
+  FormatMessageA( FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, err, 0, buf, sizeof buf, NULL );
+  size_t n = strlen( buf );
+  while ( n > 0 && ( buf[n - 1] == '\n' || buf[n - 1] == '\r' ) ) {
+    buf[--n] = '\0';
+  }
+  fprintf( stderr, "%s: %s (%lu)\n", what, buf, (unsigned long)err );
+}
+
 int swrite( mosh_fd_t fd, const char* str, ssize_t len )
 {
-  ssize_t total_bytes_written = 0;
-  ssize_t bytes_to_write = ( len >= 0 ) ? len : (ssize_t)strlen( str );
-  while ( total_bytes_written < bytes_to_write ) {
-    ssize_t bytes_written = write( fd, str + total_bytes_written, bytes_to_write - total_bytes_written );
-    if ( bytes_written <= 0 ) {
-      perror( "write" );
+  const size_t total = ( len >= 0 ) ? static_cast<size_t>( len ) : strlen( str );
+  size_t written = 0;
+
+  while ( written < total ) {
+    /* WriteFile takes a DWORD; a terminal update can in principle exceed 4GB
+       in no sane universe, but clamp rather than truncate silently. */
+    const size_t chunk = ( total - written > 0x40000000u ) ? 0x40000000u : ( total - written );
+    DWORD n = 0;
+    if ( !WriteFile( fd, str + written, static_cast<DWORD>( chunk ), &n, NULL ) ) {
+      report( "write" );
       return -1;
     }
-    total_bytes_written += bytes_written;
+    if ( n == 0 ) {
+      /* A pipe whose reader has gone, or a console that has been closed.
+         Treated as failure, as a zero-byte write(2) is on POSIX. */
+      fprintf( stderr, "write: wrote nothing\n" );
+      return -1;
+    }
+    written += n;
   }
 
   return 0;
@@ -55,5 +78,5 @@ int swrite( mosh_fd_t fd, const char* str, ssize_t len )
 
 mosh_fd_t mosh_stdout_fd( void )
 {
-  return STDOUT_FILENO;
+  return GetStdHandle( STD_OUTPUT_HANDLE );
 }

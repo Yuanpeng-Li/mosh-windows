@@ -11,22 +11,34 @@ add_library(moshutil_portable STATIC
 target_link_libraries(moshutil_portable PUBLIC mosh_common)
 add_dependencies(moshutil_portable mosh_version)
 
-# The rest is POSIX and has no Windows implementation yet: select.h is built on
-# pselect, pty_compat on forkpty and ioctl, swrite on write(2), timestamp on
-# clock_gettime, locale_utils on nl_langinfo and unsetenv.
-if(NOT WIN32)
-  add_library(moshutil STATIC
-    locale_utils.cc locale_utils.h
-    swrite.cc       swrite.h
-    select.cc       select.h
-    timestamp.cc    timestamp.h
-    pty_compat.cc   pty_compat.h
-    dos_assert.h
-    fatal_assert.h)
-  target_link_libraries(moshutil PUBLIC mosh_common moshutil_portable)
-  add_dependencies(moshutil mosh_version)
+# The rest is per-platform. Whole-file swaps rather than #ifdefs wherever the
+# two implementations answer different questions rather than spelling the same
+# answer differently -- locale_utils being the clearest case.
+set(_moshutil_sources
+  timestamp.cc    timestamp.h
+  dos_assert.h
+  fatal_assert.h)
 
-  if(MOSH_FORKPTY_LIB)
-    target_link_libraries(moshutil PUBLIC ${MOSH_FORKPTY_LIB})
-  endif()
+if(WIN32)
+  list(APPEND _moshutil_sources
+    swrite_win32.cc       swrite.h
+    locale_utils_win32.cc locale_utils.h)
+  # Still missing on Windows, and the reason mosh-client and mosh-server are
+  # not built there yet: select.h is pselect plus POSIX signals, and
+  # pty_compat is forkpty plus ioctl. Those are the event loop and the ConPTY
+  # host, and each is its own piece of work.
+else()
+  list(APPEND _moshutil_sources
+    swrite.cc       swrite.h
+    locale_utils.cc locale_utils.h
+    select.cc       select.h
+    pty_compat.cc   pty_compat.h)
+endif()
+
+add_library(moshutil STATIC ${_moshutil_sources})
+target_link_libraries(moshutil PUBLIC mosh_common moshutil_portable)
+add_dependencies(moshutil mosh_version)
+
+if(MOSH_FORKPTY_LIB)
+  target_link_libraries(moshutil PUBLIC ${MOSH_FORKPTY_LIB})
 endif()

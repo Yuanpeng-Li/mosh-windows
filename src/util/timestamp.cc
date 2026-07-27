@@ -47,6 +47,10 @@
 #include <cstdio>
 #include <sys/time.h>
 #endif
+#if defined( _WIN32 )
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 
 // On Apple systems CLOCK_MONOTONIC is unfortunately able to go
 // backwards in time. This breaks mosh when system is returning from
@@ -73,6 +77,32 @@ void freeze_timestamp( void )
 {
   // Try all our clock sources till we get something.  This could
   // break if a source only sometimes works in a given process.
+#if defined( _WIN32 )
+  // QueryPerformanceCounter is the only Windows clock guaranteed monotonic:
+  // GetTickCount64 has ~15ms granularity, and GetSystemTime follows the wall
+  // clock, which steps when NTP or the user adjusts it. mosh measures
+  // intervals, so a clock that can move backwards would confuse every timeout.
+  //
+  // Like CLOCK_MONOTONIC, this does not count time the machine spent asleep.
+  // That is the behaviour to match: mosh's own timeouts are what notice a
+  // resumed session, and they are measured against the peer's timestamps, not
+  // against elapsed wall time.
+  static LARGE_INTEGER frequency = { { 0, 0 } };
+  if ( frequency.QuadPart == 0 ) {
+    QueryPerformanceFrequency( &frequency ); // cannot fail on XP or later
+  }
+  LARGE_INTEGER counter;
+  if ( QueryPerformanceCounter( &counter ) && frequency.QuadPart != 0 ) {
+    // Split so that a large counter does not overflow before the divide.
+    const uint64_t whole = static_cast<uint64_t>( counter.QuadPart / frequency.QuadPart ) * 1000;
+    const uint64_t part
+      = static_cast<uint64_t>( counter.QuadPart % frequency.QuadPart ) * 1000 / static_cast<uint64_t>( frequency.QuadPart );
+    millis_cache = whole + part;
+    return;
+  }
+  millis_cache = GetTickCount64();
+  return;
+#endif
 #if HAVE_CLOCK_GETTIME
   // Preferred clock source-- portable, monotonic, (should be)
   // adjusted after system sleep
@@ -124,7 +154,7 @@ void freeze_timestamp( void )
     millis_cache = millis;
     return;
   }
-#else
+#elif !defined( _WIN32 )
 #error "gettimeofday() unavailable-- required as timer of last resort"
 #endif
 }
