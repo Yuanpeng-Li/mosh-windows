@@ -4,6 +4,7 @@ add_library(moshutil STATIC
   select.cc       select.h
   timestamp.cc    timestamp.h
   pty_compat.cc   pty_compat.h
+  utf8.cc         utf8.h
   dos_assert.h
   fatal_assert.h)
 

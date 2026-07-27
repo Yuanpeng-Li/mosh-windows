@@ -15,6 +15,10 @@ target_link_libraries(test-encrypt-decrypt PRIVATE mosh_common moshcrypto moshut
 add_executable(test-nonce-incr nonce-incr.cc)
 target_link_libraries(test-nonce-incr PRIVATE mosh_common moshnetwork moshcrypto moshutil)
 
+add_executable(test-utf8 utf8.cc)
+target_link_libraries(test-utf8 PRIVATE mosh_common moshutil)
+add_test(NAME utf8 COMMAND test-utf8)
+
 add_test(NAME ocb-aes         COMMAND test-ocb-aes)
 add_test(NAME encrypt-decrypt COMMAND test-encrypt-decrypt)
 add_test(NAME nonce-incr      COMMAND test-nonce-incr)
