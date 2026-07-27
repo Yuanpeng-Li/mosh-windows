@@ -142,8 +142,8 @@ static void emulate_terminal( int fd )
   Parser::UTF8Parser parser;
 
   Select& sel = Select::get_instance();
-  sel.add_fd( STDIN_FILENO );
-  sel.add_fd( fd );
+  sel.add_handle( STDIN_FILENO );
+  sel.add_handle( fd );
 
   while ( 1 ) {
     int active_fds = sel.select( -1 );
@@ -152,11 +152,11 @@ static void emulate_terminal( int fd )
       return;
     }
 
-    if ( sel.read( STDIN_FILENO ) ) {
+    if ( sel.read_handle( STDIN_FILENO ) ) {
       if ( copy( STDIN_FILENO, fd ) < 0 ) {
         return;
       }
-    } else if ( sel.read( fd ) ) {
+    } else if ( sel.read_handle( fd ) ) {
       if ( vt_parser( fd, &parser ) < 0 ) {
         return;
       }

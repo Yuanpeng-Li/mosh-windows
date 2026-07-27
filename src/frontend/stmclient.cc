@@ -465,9 +465,9 @@ bool STMClient::main( void )
       sel.clear_fds();
       std::vector<Network::socket_t> fd_list( network->fds() );
       for ( std::vector<Network::socket_t>::const_iterator it = fd_list.begin(); it != fd_list.end(); it++ ) {
-        sel.add_fd( *it );
+        sel.add_socket( *it );
       }
-      sel.add_fd( STDIN_FILENO );
+      sel.add_handle( STDIN_FILENO );
 
       int active_fds = sel.select( wait_time );
       if ( active_fds < 0 ) {
@@ -489,7 +489,7 @@ bool STMClient::main( void )
         process_network_input();
       }
 
-      if ( sel.read( STDIN_FILENO )
+      if ( sel.read_handle( STDIN_FILENO )
            && !process_user_input( STDIN_FILENO ) ) { /* input from the user needs to be fed to the network */
         if ( !network->has_remote_addr() ) {
           break;

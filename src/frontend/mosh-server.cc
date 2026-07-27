@@ -744,10 +744,10 @@ static void serve( int host_fd,
       sel.clear_fds();
       std::vector<Network::socket_t> fd_list( network.fds() );
       assert( fd_list.size() == 1 ); /* servers don't hop */
-      int network_fd = fd_list.back();
-      sel.add_fd( network_fd );
+      Network::socket_t network_fd = fd_list.back();
+      sel.add_socket( network_fd );
       if ( !network.shutdown_in_progress() ) {
-        sel.add_fd( host_fd );
+        sel.add_handle( host_fd );
       }
 
       int active_fds = sel.select( timeout );
@@ -860,7 +860,7 @@ static void serve( int host_fd,
         }
       }
 
-      if ( ( !network.shutdown_in_progress() ) && sel.read( host_fd ) ) {
+      if ( ( !network.shutdown_in_progress() ) && sel.read_handle( host_fd ) ) {
         /* input from the host needs to be fed to the terminal */
         const int buf_size = 16384;
         char buf[buf_size];

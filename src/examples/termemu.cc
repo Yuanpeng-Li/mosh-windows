@@ -239,8 +239,8 @@ static void emulate_terminal( int fd )
   Terminal::Display display( true ); /* use TERM to initialize */
 
   Select& sel = Select::get_instance();
-  sel.add_fd( STDIN_FILENO );
-  sel.add_fd( fd );
+  sel.add_handle( STDIN_FILENO );
+  sel.add_handle( fd );
   sel.add_signal( SIGWINCH );
 
   swrite( mosh_stdout_fd(), display.open().c_str() );
@@ -254,7 +254,7 @@ static void emulate_terminal( int fd )
       break;
     }
 
-    if ( sel.read( STDIN_FILENO ) ) {
+    if ( sel.read_handle( STDIN_FILENO ) ) {
       /* input from user */
       char buf[buf_size];
 
@@ -276,7 +276,7 @@ static void emulate_terminal( int fd )
       if ( swrite( fd, terminal_to_host.c_str(), terminal_to_host.length() ) < 0 ) {
         break;
       }
-    } else if ( sel.read( fd ) ) {
+    } else if ( sel.read_handle( fd ) ) {
       /* input from host */
       char buf[buf_size];
 

@@ -82,7 +82,7 @@ int main( int argc, char* argv[] )
         std::vector<Network::socket_t> fd_list( n->fds() );
         assert( fd_list.size() == 1 ); /* servers don't hop */
         int network_fd = fd_list.back();
-        sel.add_fd( network_fd );
+        sel.add_socket( network_fd );
         if ( sel.select( n->wait_time() ) < 0 ) {
           perror( "select" );
           exit( 1 );
@@ -125,11 +125,11 @@ int main( int argc, char* argv[] )
 
     while ( true ) {
       sel.clear_fds();
-      sel.add_fd( STDIN_FILENO );
+      sel.add_handle( STDIN_FILENO );
 
       std::vector<Network::socket_t> fd_list( n->fds() );
       for ( std::vector<Network::socket_t>::const_iterator it = fd_list.begin(); it != fd_list.end(); it++ ) {
-        sel.add_fd( *it );
+        sel.add_socket( *it );
       }
 
       try {
@@ -139,7 +139,7 @@ int main( int argc, char* argv[] )
 
         n->tick();
 
-        if ( sel.read( STDIN_FILENO ) ) {
+        if ( sel.read_handle( STDIN_FILENO ) ) {
           char x;
           fatal_assert( read( STDIN_FILENO, &x, 1 ) == 1 );
           n->get_current_state().push_back( Parser::UserByte( x ) );

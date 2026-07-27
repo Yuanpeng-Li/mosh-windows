@@ -22,11 +22,10 @@ set(_moshutil_sources
 if(WIN32)
   list(APPEND _moshutil_sources
     swrite_win32.cc       swrite.h
-    locale_utils_win32.cc locale_utils.h)
-  # Still missing on Windows, and the reason mosh-client and mosh-server are
-  # not built there yet: select.h is pselect plus POSIX signals, and
-  # pty_compat is forkpty plus ioctl. Those are the event loop and the ConPTY
-  # host, and each is its own piece of work.
+    locale_utils_win32.cc locale_utils.h
+    select_win32.cc       select.h)
+  # pty_compat is still missing: forkpty and ioctl, which the ConPTY host
+  # replaces.
 else()
   list(APPEND _moshutil_sources
     swrite.cc       swrite.h
