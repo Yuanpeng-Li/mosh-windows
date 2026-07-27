@@ -1,72 +1,249 @@
-<#
-.SYNOPSIS
-    mosh -- the mobile shell. Windows launcher.
+# mosh -- the mobile shell. Windows launcher.
+#
+# The counterpart of scripts/mosh.pl: ssh to the host, start mosh-server there,
+# read back the port and session key it prints, and hand those to a local
+# mosh-client over UDP.
+#
+# The command-line interface is deliberately the Perl script's, not
+# PowerShell's. `mosh --predict=always -p 60000:60010 user@host` has to mean
+# the same thing here as it does on Linux and macOS, so the arguments are
+# parsed by hand rather than through [CmdletBinding()] -- which would rename
+# every option, reorder them, and prompt interactively for a missing host
+# instead of printing usage.
+#
+# Independent of the C++ port: it drives whatever mosh-client.exe it can find.
 
-.DESCRIPTION
-    The Windows counterpart of scripts/mosh.pl. It does what the Perl script
-    does: ssh to the host, start mosh-server there, read back the port and
-    session key it prints, and hand those to a local mosh-client over UDP.
-
-    This is deliberately independent of the C++ port -- it drives whatever
-    mosh-client.exe it can find, so it works today with an existing Windows
-    client build and will keep working with this tree's own once that exists.
-
-.PARAMETER Destination
-    [user@]host, as you would give ssh.
-
-.EXAMPLE
-    mosh lyp@10.0.0.5
-    mosh -SshPort 2022 lyp@example.com
-    mosh server -- tmux attach
-#>
-
-[CmdletBinding()]
-param(
-    [Parameter(Mandatory = $true, Position = 0)]
-    [string] $Destination,
-
-    # Port for the ssh bootstrap connection (ssh -p).
-    [int] $SshPort,
-
-    # UDP port or range for mosh-server to bind (mosh-server -p).
-    [string] $Port,
-
-    # Locale to hand mosh-server. Windows has no LANG, and mosh-server refuses
-    # to run outside a UTF-8 locale, so one has to be synthesised.
-    [string] $Locale,
-
-    [int] $Colors = 256,
-
-    # Path to mosh-client.exe, if it is not next to this script or on PATH.
-    [string] $Client,
-
-    # Remote mosh-server command.
-    [string] $Server = 'mosh-server',
-
-    # Extra options passed straight to ssh, e.g. -SshOption '-i','~/.ssh/id_ed25519'
-    [string[]] $SshOption = @(),
-
-    # Anything after -- is the command to run on the remote host.
-    [Parameter(ValueFromRemainingArguments = $true)]
-    [string[]] $Command = @()
-)
-
+Set-StrictMode -Off
 # Deliberately NOT 'Stop'. This script drives native programs whose stderr
 # PowerShell converts into error records; mosh-server writes its banner there,
 # and under 'Stop' that ordinary line becomes a terminating error.
 $ErrorActionPreference = 'Continue'
 
-function Die($msg) {
-    Write-Host "mosh: $msg" -ForegroundColor Red
+$ProgName = 'mosh'
+
+$Usage = @"
+Usage: $ProgName [options] [--] [user@]host [command...]
+        --client=PATH        mosh client on local machine
+                                (default: "mosh-client")
+        --server=COMMAND     mosh server on remote machine
+                                (default: "mosh-server")
+
+        --predict=adaptive      local echo for slower links [default]
+-a      --predict=always        use local echo even on fast links
+-n      --predict=never         never use local echo
+        --predict=experimental  aggressively echo even when incorrect
+
+-o      --predict-overwrite     prediction overwrites instead of inserting
+
+-4      --family=inet        use IPv4 only
+-6      --family=inet6       use IPv6 only
+        --family=auto        autodetect network type for single-family hosts only
+        --family=all         try all network types
+        --family=prefer-inet use all network types, but try IPv4 first [default]
+        --family=prefer-inet6 use all network types, but try IPv6 first
+-p PORT[:PORT2]
+        --port=PORT[:PORT2]  server-side UDP port or range
+                                (No effect on server-side SSH port)
+        --bind-server={ssh|any|IP}  ask the server to reply from an IP address
+                                       (default: "ssh")
+
+        --ssh=COMMAND        ssh command to run when setting up session
+                                (example: "ssh -p 2222")
+                                (default: "ssh")
+
+        --no-ssh-pty         do not allocate a pseudo tty on ssh connection
+
+        --no-init            do not send terminal initialization string
+
+        --local              run mosh-server locally without using ssh
+
+        --experimental-remote-ip=(local|remote)  select the method for
+                             discovering the remote IP address to use for mosh
+                             (default: "remote")
+
+        --locale=LOCALE      UTF-8 locale to ask mosh-server for
+                                (default: "C.UTF-8"; Windows has no LANG, and
+                                 mosh-server requires a UTF-8 locale)
+
+        --help               this message
+        --version            version and copyright information
+
+Please report bugs to https://github.com/Yuanpeng-Li/mosh-windows/issues
+Mosh home page: https://mosh.org
+"@
+
+$VersionMessage = @"
+mosh 1.4.0 (Windows launcher)
+Copyright 2012 Keith Winstein <mosh-devel@mit.edu>
+License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>.
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+"@
+
+function Write-Usage-And-Exit([int] $code) {
+    if ($code -eq 0) { Write-Output $Usage } else { [Console]::Error.WriteLine($Usage) }
+    exit $code
+}
+function Die([string] $msg) {
+    [Console]::Error.WriteLine("$ProgName`: $msg")
     exit 1
 }
+function Die-Usage([string] $msg) {
+    [Console]::Error.WriteLine("$ProgName`: $msg`n")
+    Write-Usage-And-Exit 1
+}
 
-# ---------------------------------------------------------------- client ----
+# --------------------------------------------------------- argument parsing --
 
-function Find-MoshClient {
-    if ($Client) {
-        if (Test-Path -LiteralPath $Client) { return (Resolve-Path -LiteralPath $Client).Path }
-        Die "mosh-client not found at: $Client"
+$client       = 'mosh-client'
+$server       = 'mosh-server'
+$predict      = $null
+$overwrite    = $false
+$bindIp       = $null
+$useRemoteIp  = 'remote'
+$family       = 'prefer-inet'
+$portRequest  = $null
+$sshWords     = @('ssh')
+$termInit     = $true
+$localhost    = $false
+$locale       = $null
+$userhost     = $null
+$command      = @()
+
+$argv = @($args)
+
+# `pwsh -File script.ps1 --client=C:\path\to.exe` arrives split in two, as
+# "--client=C" and "\path\to.exe": PowerShell's -File argument parser treats
+# the colon as the -Name:Value separator. Invoking as `& script.ps1 @args`
+# (what the profile function does) is unaffected, but the launcher should work
+# either way. Rejoin the halves -- a lone drive letter followed by a token
+# starting with a separator is never two real arguments.
+$rejoined = @()
+for ($j = 0; $j -lt $argv.Count; $j++) {
+    $cur = [string]$argv[$j]
+    if ($j + 1 -lt $argv.Count -and
+        $cur -match '^--[^=]+=[A-Za-z]$' -and
+        ([string]$argv[$j + 1]) -match '^[\\/]') {
+        $rejoined += ($cur + ':' + [string]$argv[$j + 1])
+        $j++
+    } else {
+        $rejoined += $cur
+    }
+}
+$argv = $rejoined
+
+$i = 0
+$endOfOptions = $false
+
+# Options that take a value may be written --opt=value or --opt value, as
+# Getopt::Long accepts both.
+function Next-Value([string] $name) {
+    $script:i++
+    if ($script:i -ge $script:argv.Count) { Die-Usage "option $name requires an argument" }
+    return $script:argv[$script:i]
+}
+
+while ($i -lt $argv.Count) {
+    $a = [string]$argv[$i]
+
+    if ($endOfOptions -or $a -notmatch '^-' -or $a -eq '-') {
+        $userhost = $a
+        $i++
+        break
+    }
+
+    if ($a -eq '--') { $endOfOptions = $true; $i++; continue }
+
+    $name = $a; $val = $null; $hasVal = $false
+    if ($a -match '^(--[^=]+)=(.*)$') { $name = $Matches[1]; $val = $Matches[2]; $hasVal = $true }
+
+    switch -CaseSensitive ($name) {
+        '--help'      { Write-Usage-And-Exit 0 }
+        '--version'   { Write-Output $VersionMessage; exit 0 }
+        '--client'    { $client   = if ($hasVal) { $val } else { Next-Value $name } }
+        '--server'    { $server   = if ($hasVal) { $val } else { Next-Value $name } }
+        '--predict'   { $predict  = if ($hasVal) { $val } else { Next-Value $name } }
+        '--port'      { $portRequest = if ($hasVal) { $val } else { Next-Value $name } }
+        '-p'          { $portRequest = Next-Value $name }
+        '--family'    { $family   = if ($hasVal) { $val } else { Next-Value $name } }
+        '--bind-server' { $bindIp = if ($hasVal) { $val } else { Next-Value $name } }
+        '--locale'    { $locale   = if ($hasVal) { $val } else { Next-Value $name } }
+        '--ssh' {
+            $s = if ($hasVal) { $val } else { Next-Value $name }
+            # Getopt uses shellwords() here; the common cases are plain
+            # whitespace splitting with optional quoting.
+            $sshWords = [regex]::Matches($s, '"([^"]*)"|''([^'']*)''|(\S+)') | ForEach-Object {
+                if ($_.Groups[1].Success) { $_.Groups[1].Value }
+                elseif ($_.Groups[2].Success) { $_.Groups[2].Value }
+                else { $_.Groups[3].Value }
+            }
+            if (-not $sshWords) { Die-Usage "--ssh needs a command" }
+        }
+        '--experimental-remote-ip' { $useRemoteIp = if ($hasVal) { $val } else { Next-Value $name } }
+        '-a' { $predict = 'always' }
+        '-n' { $predict = 'never' }
+        '-4' { $family = 'inet' }
+        '-6' { $family = 'inet6' }
+        '-o' { $overwrite = $true }
+        '--predict-overwrite'    { $overwrite = $true }
+        '--no-predict-overwrite' { $overwrite = $false }
+        '--init'        { $termInit = $true }
+        '--no-init'     { $termInit = $false }
+        '--ssh-pty'     { $sshPty = $true }
+        '--no-ssh-pty'  { $sshPty = $false }
+        '--local'       { $localhost = $true }
+        default { Die-Usage "unrecognized option `"$a`"" }
+    }
+    $i++
+}
+
+# Everything after the host is the remote command.
+if ($i -lt $argv.Count) { $command = @($argv[$i..($argv.Count - 1)]) }
+
+if (-not $userhost) { Write-Usage-And-Exit 1 }
+
+# --------------------------------------------------------------- validation --
+
+if ($predict) {
+    if ($predict -notin @('adaptive', 'always', 'never', 'experimental')) {
+        Die-Usage "Unknown mode `"$predict`"."
+    }
+} elseif ($env:MOSH_PREDICTION_DISPLAY) {
+    $predict = $env:MOSH_PREDICTION_DISPLAY
+    if ($predict -notin @('adaptive', 'always', 'never', 'experimental')) {
+        Die-Usage "Unknown mode `"$predict`" (MOSH_PREDICTION_DISPLAY in environment)."
+    }
+} else {
+    $predict = 'adaptive'
+}
+
+if ($family -notin @('inet', 'inet6', 'auto', 'all', 'prefer-inet', 'prefer-inet6')) {
+    Die-Usage "Unknown family `"$family`"."
+}
+
+if ($useRemoteIp -eq 'proxy') {
+    Die @"
+--experimental-remote-ip=proxy is not implemented on Windows.
+
+It works by re-invoking this script as an ssh ProxyCommand, which Win32
+OpenSSH runs through cmd.exe with different quoting rules. Use the default
+(remote), which asks the server for its address via `$SSH_CONNECTION.
+"@
+}
+if ($useRemoteIp -notin @('local', 'remote')) { Die-Usage "Unknown parameter $useRemoteIp" }
+
+if ($localhost) {
+    Die "--local needs a native mosh-server, which this tree does not build yet."
+}
+
+# --------------------------------------------------------------- the client --
+
+function Find-MoshClient([string] $want) {
+    if ($want -ne 'mosh-client') {
+        if (Test-Path -LiteralPath $want) { return (Resolve-Path -LiteralPath $want).Path }
+        $c = Get-Command $want -ErrorAction SilentlyContinue
+        if ($c) { return $c.Source }
+        Die "Cannot find mosh-client at: $want"
     }
     if ($env:MOSH_CLIENT -and (Test-Path -LiteralPath $env:MOSH_CLIENT)) {
         return (Resolve-Path -LiteralPath $env:MOSH_CLIENT).Path
@@ -76,41 +253,39 @@ function Find-MoshClient {
         $p = Join-Path $here $n
         if (Test-Path -LiteralPath $p) { return (Resolve-Path -LiteralPath $p).Path }
     }
-    $cmd = Get-Command mosh-client -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
+    $c = Get-Command mosh-client -ErrorAction SilentlyContinue
+    if ($c) { return $c.Source }
     Die @"
-no mosh-client found.
+Cannot find mosh-client.
 
-Looked at: -Client, `$env:MOSH_CLIENT, next to this script, and PATH.
-Put a mosh-client.exe beside this script, or set MOSH_CLIENT.
+Looked at: --client, `$env:MOSH_CLIENT, next to this script, and PATH.
 "@
 }
+$clientPath = Find-MoshClient $client
 
-$clientPath = Find-MoshClient
+$sshExe = Get-Command $sshWords[0] -ErrorAction SilentlyContinue
+if (-not $sshExe) { Die "Cannot find ssh: $($sshWords[0])" }
 
-# ------------------------------------------------------------------ ssh ----
+# --------------------------------------------------- build the remote command --
 
-$sshExe = (Get-Command ssh -ErrorAction SilentlyContinue)
-if (-not $sshExe) { Die "ssh not found on PATH (install the Windows OpenSSH client)" }
-
-# Pick the locale to request. Unix mosh forwards the caller's LANG/LC_*; there
-# is no such thing here, so fall back to a UTF-8 locale that is present on
-# essentially every current Linux. Override with -Locale for hosts that only
-# have, say, en_US.UTF-8.
-if (-not $Locale) {
-    if ($env:MOSH_LOCALE) { $Locale = $env:MOSH_LOCALE }
-    elseif ($env:LANG)    { $Locale = $env:LANG }
-    else                  { $Locale = 'C.UTF-8' }
+# Windows has no LANG, and mosh-server refuses to run outside a UTF-8 locale,
+# so one has to be synthesised.
+if (-not $locale) {
+    if ($env:MOSH_LOCALE) { $locale = $env:MOSH_LOCALE }
+    elseif ($env:LANG)    { $locale = $env:LANG }
+    else                  { $locale = 'C.UTF-8' }
 }
 
-# mosh-server's own argument list, in the order scripts/mosh.pl builds it.
-$serverArgs = @('new', '-c', "$Colors", '-s')
-if ($Port) { $serverArgs += @('-p', $Port) }
-$serverArgs += @('-l', "LANG=$Locale", '-l', "LC_ALL=$Locale")
-if ($Command.Count -gt 0) { $serverArgs += @('--') + $Command }
+$serverArgs = @('new')
+$serverArgs += @('-c', '256')
+if (-not $bindIp -or $bindIp -match '^ssh$') { $serverArgs += '-s' }
+elseif ($bindIp -match '^any$') { }
+else { $serverArgs += @('-i', $bindIp) }
+if ($portRequest) { $serverArgs += @('-p', $portRequest) }
+$serverArgs += @('-l', "LANG=$locale", '-l', "LC_ALL=$locale")
+if ($command.Count -gt 0) { $serverArgs += @('--') + $command }
 
-# The remote side runs this through a POSIX shell, so quote for sh -- not for
-# PowerShell and not for cmd.
+# Quoted for the remote POSIX shell -- not for PowerShell and not for cmd.
 function ConvertTo-ShQuoted([string[]] $words) {
     ($words | ForEach-Object {
         if ($_ -match '^[A-Za-z0-9_./:@%+=-]+$') { $_ }
@@ -118,40 +293,40 @@ function ConvertTo-ShQuoted([string[]] $words) {
     }) -join ' '
 }
 
-# Ask the remote end which address ssh actually reached it on, and connect the
-# UDP session to that. Without this the client is handed whatever string the
-# user typed -- which for an ssh_config alias like "myserver" is not a name
-# DNS can resolve, and on a multi-homed host is not necessarily the address
-# mosh-server bound to. This is what mosh.pl's --experimental-remote-ip=remote
-# does. The user's login shell may not be POSIX, hence the explicit sh -c.
-$probe = '[ -n "$SSH_CONNECTION" ] && printf "\nMOSH SSH_CONNECTION %s\n" "$SSH_CONNECTION"'
-$remoteCmd = 'sh -c ' + (ConvertTo-ShQuoted @($probe)) + ' ; ' +
-             "$Server " + (ConvertTo-ShQuoted $serverArgs)
+$remoteCmd = "$server " + (ConvertTo-ShQuoted $serverArgs)
+
+if ($useRemoteIp -eq 'remote') {
+    # Ask the remote end which address ssh actually reached it on, and connect
+    # the UDP session to that. Handing the client whatever the user typed
+    # breaks for an ssh_config alias, which is not a name DNS can resolve, and
+    # on a multi-homed host is not necessarily the address mosh-server bound
+    # to. The login shell may not be POSIX, hence the explicit sh -c.
+    $probe = '[ -n "$SSH_CONNECTION" ] && printf "\nMOSH SSH_CONNECTION %s\n" "$SSH_CONNECTION"'
+    $remoteCmd = 'sh -c ' + (ConvertTo-ShQuoted @($probe)) + ' ; ' + $remoteCmd
+}
+
+# ------------------------------------------------------------------- ssh -----
 
 $sshArgs = @()
-if ($SshPort) { $sshArgs += @('-p', "$SshPort") }
+if ($sshWords.Count -gt 1) { $sshArgs += $sshWords[1..($sshWords.Count - 1)] }
+if ($useRemoteIp -eq 'remote') {
+    if ($family -eq 'inet') { $sshArgs += '-4' } elseif ($family -eq 'inet6') { $sshArgs += '-6' }
+}
 
 # ssh reads stdin and forwards it, which is what makes password and 2FA
-# prompts work -- so normally leave it alone. But when there is no console
-# (a scheduled task, a detached process, a CI step) stdin is not a usable
-# handle and ssh blocks on it forever. Detect that and pass -n.
+# prompts work -- so normally leave it alone. But with no console (a scheduled
+# task, a detached process) stdin is not a usable handle and ssh blocks on it
+# forever. Detect that and pass -n.
 $hasConsole = $true
 try { $null = [System.Console]::KeyAvailable } catch { $hasConsole = $false }
 if (-not $hasConsole) { $sshArgs += '-n' }
 
-$sshArgs += $SshOption
-$sshArgs += @($Destination, '--', $remoteCmd)
-
-# ------------------------------------------------------- run the bootstrap --
-# stdout is captured so we can read MOSH CONNECT; stdin and stderr stay on the
-# console so password and 2FA prompts still work.
+$sshArgs += @($userhost, '--', $remoteCmd)
 
 # The redirection is done by cmd, not by PowerShell. PowerShell turns a native
-# program's stderr into error records, and mosh-server writes its banner there,
-# which under $ErrorActionPreference = 'Stop' aborts the script -- or worse,
-# wedges it. Letting cmd do it keeps both streams as plain file handles: stdout
-# to the temp file for us to parse, stderr and stdin straight through to the
-# console so password and 2FA prompts still work.
+# program's stderr into error records, and mosh-server writes its banner there.
+# Letting cmd do it keeps both streams as plain file handles: stdout to a file
+# for us to parse, stderr and stdin straight through to the console.
 function ConvertTo-CmdQuoted([string] $s) { '"' + ($s -replace '"', '\"') + '"' }
 
 $outFile = [System.IO.Path]::GetTempFileName()
@@ -165,9 +340,11 @@ try {
     Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue
 }
 
+# ----------------------------------------------------------------- parsing --
+
 $ip = $null; $port = $null; $key = $null
 foreach ($line in $lines) {
-    $l = $line.TrimEnd()
+    $l = ([string]$line).TrimEnd()
     if ($l -match '^MOSH IP (\S+)\s*$') { $ip = $Matches[1]; continue }
     # SSH_CONNECTION is "<client ip> <client port> <server ip> <server port>",
     # so with the two leading words the server address is field 4.
@@ -179,41 +356,38 @@ foreach ($line in $lines) {
     if ($l -match '^MOSH CONNECT (\d+) ([A-Za-z0-9/+]{22})\s*$') {
         $port = $Matches[1]; $key = $Matches[2]; continue
     }
-    # mosh-server's own diagnostics are worth showing; its banner is not.
-    if ($l -and $l -notmatch '^mosh-server \(' -and $l -notmatch '^Copyright ' -and
-        $l -notmatch '^License ' -and $l -notmatch '^This is free software') {
-        Write-Host $l
-    }
+    if ($l) { Write-Output $l }
 }
 
 if (-not $key) {
-    if ($sshExit -ne 0) { Die "ssh exited with status $sshExit; did not get a session from mosh-server." }
+    if ($sshExit -ne 0) { Die "ssh exited with status $sshExit; no session was started." }
     Die @"
-did not find a 'MOSH CONNECT' line in the server's output.
+Did not find a 'MOSH CONNECT' line in the server's output.
 
 Usually one of:
   * mosh-server is not installed on the remote host, or not on its PATH
-  * the remote locale is not UTF-8 -- try -Locale en_US.UTF-8
+  * the remote locale is not UTF-8 -- try --locale=en_US.UTF-8
   * something in the remote shell's startup files printed before mosh-server ran
 "@
 }
 
-# mosh-server was told -s, so it reports the address ssh came from. If it did
-# not, fall back to the host we were given.
-if (-not $ip) {
-    $ip = $Destination -replace '^.*@', ''
-}
+if (-not $ip) { $ip = $userhost -replace '^.*@', '' }
 
-# ------------------------------------------------------------- connect -----
-# The key goes through the environment, never the command line: command lines
-# are visible to every process on the machine and are logged by WMI, Sysmon and
-# Defender. Invoke the client directly so it inherits this console.
+# ---------------------------------------------------------------- connect ---
+# The key goes through the environment and never the command line: command
+# lines are readable by every process on the machine and are recorded by WMI,
+# Sysmon and Defender.
 
 $env:MOSH_KEY = $key
+$env:MOSH_PREDICTION_DISPLAY = $predict
+if ($overwrite) { $env:MOSH_PREDICTION_OVERWRITE = 'yes' }
+if (-not $termInit) { $env:MOSH_NO_TERM_INIT = '1' }
 try {
     & $clientPath $ip $port
     $rc = $LASTEXITCODE
 } finally {
-    Remove-Item Env:\MOSH_KEY -ErrorAction SilentlyContinue
+    foreach ($v in 'MOSH_KEY', 'MOSH_PREDICTION_OVERWRITE', 'MOSH_NO_TERM_INIT') {
+        Remove-Item "Env:\$v" -ErrorAction SilentlyContinue
+    }
 }
 exit $rc
