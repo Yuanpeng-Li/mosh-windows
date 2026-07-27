@@ -1,4 +1,4 @@
-EXTRA_DIST = wrap-compiler-for-flag-check mosh.pl
+EXTRA_DIST = wrap-compiler-for-flag-check mosh.pl CMakeLists.txt
 if BUILD_CLIENT
   bin_SCRIPTS = mosh
 endif

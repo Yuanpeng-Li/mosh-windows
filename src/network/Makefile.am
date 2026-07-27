@@ -4,3 +4,6 @@ AM_CXXFLAGS = $(WARNING_CXXFLAGS) $(PICKY_CXXFLAGS) $(HARDEN_CFLAGS) $(MISC_CXXF
 noinst_LIBRARIES = libmoshnetwork.a
 
 libmoshnetwork_a_SOURCES = network.cc network.h networktransport-impl.h networktransport.h transportfragment.cc transportfragment.h transportsender-impl.h transportsender.h transportstate.h compressor.cc compressor.h
+
+# Ship the peer CMake build in the dist tarball.
+EXTRA_DIST = CMakeLists.txt

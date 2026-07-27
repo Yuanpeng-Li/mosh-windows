@@ -39,3 +39,11 @@ src/include/stamp-h1
 /VERSION.stamp
 /scripts/mosh
 src/include/version.h
+
+# CMake. Out-of-tree builds are required (the top-level CMakeLists refuses an
+# in-source configure), but CMake creates these before it can refuse.
+/CMakeCache.txt
+/CMakeFiles/
+/cmake_install.cmake
+/CTestTestfile.cmake
+/build*/

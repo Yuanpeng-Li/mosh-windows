@@ -17,3 +17,6 @@ endif
 
 mosh_client_SOURCES = mosh-client.cc stmclient.cc stmclient.h terminaloverlay.cc terminaloverlay.h
 mosh_server_SOURCES = mosh-server.cc
+
+# Ship the peer CMake build in the dist tarball.
+EXTRA_DIST = CMakeLists.txt

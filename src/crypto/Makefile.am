@@ -18,3 +18,6 @@ libmoshcrypto_a_SOURCES = \
 	crypto.cc \
 	crypto.h \
 	prng.h
+
+# Ship the peer CMake build in the dist tarball.
+EXTRA_DIST = CMakeLists.txt

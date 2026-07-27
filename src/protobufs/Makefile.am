@@ -15,3 +15,6 @@ nodist_libmoshprotos_a_SOURCES = $(source:.proto=.pb.cc) $(source:.proto=.pb.h)
 
 BUILT_SOURCES = $(source:.proto=.pb.cc)
 CLEANFILES = $(source:.proto=.pb.cc) $(source:.proto=.pb.h)
+
+# Ship the peer CMake build in the dist tarball.
+EXTRA_DIST = CMakeLists.txt

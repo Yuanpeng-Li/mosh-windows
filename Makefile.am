@@ -8,7 +8,13 @@ include $(top_srcdir)/aminclude_static.am
 
 ACLOCAL_AMFLAGS = -I m4
 SUBDIRS = scripts src man conf
-EXTRA_DIST = autogen.sh ocb-license.html README.md COPYING.iOS
+# The CMake build is a peer of this one (it is what makes a native Windows
+# build possible); automake will not pick these up on its own, so a release
+# tarball would otherwise ship without it.
+EXTRA_DIST = autogen.sh ocb-license.html README.md COPYING.iOS \
+	CMakeLists.txt vcpkg.json \
+	cmake/config.h.in cmake/MoshChecks.cmake \
+	cmake/GenVersionHeader.cmake cmake/GenMoshScript.cmake
 BUILT_SOURCES = VERSION.stamp
 AM_DISTCHECK_CONFIGURE_FLAGS += --enable-compile-warnings=distcheck --enable-examples --enable-syslog
 

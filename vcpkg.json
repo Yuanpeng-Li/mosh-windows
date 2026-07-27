@@ -1,0 +1,23 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "mosh",
+  "version-string": "1.4.0",
+  "description": "Mosh: the mobile shell -- native Windows port dependencies",
+  "homepage": "https://mosh.org/",
+  "$comment": [
+    "builtin-baseline pins the whole dependency set to one vcpkg commit.",
+    "Without it, protoc and libprotobuf can come from different vcpkg",
+    "checkouts and skew -- exactly the mismatch configure.ac:554 guards",
+    "against on the autotools side.",
+    "Keep version-string in sync with AC_INIT in configure.ac."
+  ],
+  "builtin-baseline": "6d9d7df564a1ccdaa994e4ad39ccd4a32360867b",
+  "dependencies": [
+    "protobuf",
+    "zlib",
+    {
+      "name": "openssl",
+      "default-features": false
+    }
+  ]
+}
