@@ -1,0 +1,48 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+PackageIdentifier: YuanpengLi.MoshWindows
+PackageVersion: 0.1.0
+PackageLocale: en-US
+Publisher: Yuanpeng Li
+PublisherUrl: https://github.com/Yuanpeng-Li
+PublisherSupportUrl: https://github.com/Yuanpeng-Li/mosh-windows/issues
+PackageName: Mosh for Windows (launcher)
+PackageUrl: https://github.com/Yuanpeng-Li/mosh-windows
+License: GPL-3.0-or-later
+LicenseUrl: https://github.com/Yuanpeng-Li/mosh-windows/blob/windows/COPYING
+Copyright: Copyright 2012 Keith Winstein and the Mosh developers
+CopyrightUrl: https://github.com/Yuanpeng-Li/mosh-windows/blob/windows/COPYING
+ShortDescription: Run `mosh user@host` natively on Windows, without Cygwin or WSL
+Description: |-
+  Mosh is a remote terminal that survives sleep, roaming and packet loss, and
+  echoes typing locally so a high-latency link still feels responsive. It has
+  never had a native Windows build.
+
+  This package installs the Windows launcher: the piece that ssh's to the host,
+  starts mosh-server there, reads back the session key, and hands the session to
+  a local client. It carries the upstream command-line interface, so anything
+  you already type on Linux or macOS works unchanged.
+
+  The client binary is not bundled. Run `mosh --setup` once after installing and
+  it downloads one, verified against a pinned SHA-256. The client is MoshCatty,
+  a separate GPLv3 project; redistributing its binary would carry an obligation
+  to supply matching source.
+
+  The remote host needs nothing from this package -- just mosh from its own
+  package manager, and inbound UDP 60000-61000 open.
+
+  This is an unofficial fork of Mosh, not endorsed by or affiliated with the
+  upstream project.
+Moniker: mosh
+Tags:
+  - mosh
+  - ssh
+  - terminal
+  - remote
+  - shell
+  - roaming
+ReleaseNotesUrl: https://github.com/Yuanpeng-Li/mosh-windows/releases/tag/v0.1.0
+Documentations:
+  - DocumentLabel: README
+    DocumentUrl: https://github.com/Yuanpeng-Li/mosh-windows/blob/windows/README.windows.md
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

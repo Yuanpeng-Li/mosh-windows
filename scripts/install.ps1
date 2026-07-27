@@ -48,41 +48,46 @@ if (-not (Get-Command ssh -ErrorAction SilentlyContinue)) {
     Warn "Continuing -- mosh will not work until ssh is available."
 }
 
-# ------------------------------------------------------------- pick files --
-# Prefer a tagged release; fall back to the branch so this works before the
-# first release exists.
-
-$files = @('mosh.ps1', 'mosh.cmd')
-$base = $null
+# ----------------------------------------------------------- the release --
+# The release archive, not individual raw files: it carries mosh.exe, which is
+# a binary and so is not in the git tree.
 
 if (-not $Version) {
     try {
         $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -UseBasicParsing
         $Version = $rel.tag_name
-    } catch { $Version = $null }
+    } catch {
+        Fail "could not reach the GitHub API to find the latest release -- $_"
+    }
 }
+Info "Release $Version"
 
-if ($Version) {
-    $base = "https://raw.githubusercontent.com/$Repo/$Version/scripts"
-    Info "Release $Version"
-} else {
-    $base = "https://raw.githubusercontent.com/$Repo/windows/scripts"
-    Info "No tagged release yet -- installing from the windows branch"
+$zipName = "mosh-windows-launcher-$Version.zip"
+$zipUrl  = "https://github.com/$Repo/releases/download/$Version/$zipName"
+
+Step "Downloading $zipName"
+$tmpZip = Join-Path ([System.IO.Path]::GetTempPath()) ("mosh-" + [Guid]::NewGuid().ToString('N') + '.zip')
+try {
+    Invoke-WebRequest -Uri $zipUrl -OutFile $tmpZip -UseBasicParsing
+} catch {
+    Fail "could not download $zipUrl -- $_"
 }
-
-# ------------------------------------------------------------------ files --
 
 Step "Installing into $Dir"
 New-Item -ItemType Directory -Path $Dir -Force | Out-Null
-
-foreach ($f in $files) {
-    $dest = Join-Path $Dir $f
-    try {
-        Invoke-WebRequest -Uri "$base/$f" -OutFile $dest -UseBasicParsing
-        Info "$f"
-    } catch {
-        Fail "could not download $f from $base/$f -- $_"
+$tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("mosh-x-" + [Guid]::NewGuid().ToString('N'))
+try {
+    Expand-Archive -LiteralPath $tmpZip -DestinationPath $tmpDir -Force
+    # The archive has a single top-level mosh\ directory.
+    $src = Join-Path $tmpDir 'mosh'
+    if (-not (Test-Path $src)) { $src = $tmpDir }
+    Get-ChildItem -LiteralPath $src -File | ForEach-Object {
+        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $Dir $_.Name) -Force
+        Info $_.Name
     }
+} finally {
+    Remove-Item -LiteralPath $tmpZip -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 # A tiny uninstaller, so removing this is as easy as installing it.

@@ -38,7 +38,7 @@ mosh user@host
 ### winget
 
 ```powershell
-winget install YuanpengLi.Mosh
+winget install YuanpengLi.MoshWindows
 mosh --setup          # fetches mosh-client.exe on first use
 ```
 
@@ -51,9 +51,15 @@ mosh --setup          # fetches mosh-client.exe on first use
 
 ### By hand
 
-Drop [`scripts/mosh.ps1`](scripts/mosh.ps1) and
-[`scripts/mosh.cmd`](scripts/mosh.cmd) in a directory on your PATH, then run
-`mosh --setup`.
+Take `mosh.exe` and `mosh.ps1` out of the
+[release archive](https://github.com/Yuanpeng-Li/mosh-windows/releases/latest),
+put them in a directory on your PATH, and run `mosh --setup`.
+
+`mosh.exe` is a small shim that finds `mosh.ps1` beside it and runs it under
+PowerShell; it exists because a `.ps1` cannot be put on PATH and invoked as a
+command. From a source checkout without a compiler, `mosh.cmd` does the same
+job, with the caveat that batch cannot quote an argument containing a space for
+PowerShell's parser.
 
 ### Uninstall
 
