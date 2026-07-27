@@ -64,6 +64,8 @@
 
 #include "src/network/networktransport-impl.h"
 
+#include "src/util/compat.h"
+
 void STMClient::resume( void )
 {
   /* Restore termios state */
@@ -91,7 +93,7 @@ void STMClient::init( void )
              "the character set \"%s\".\n\n",
              native_ctype.str().c_str(),
              native_charset.c_str() );
-    int unused __attribute( ( unused ) ) = system( "locale" );
+    int unused MOSH_UNUSED = system( "locale" );
     exit( 1 );
   }
 

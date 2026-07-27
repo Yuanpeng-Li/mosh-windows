@@ -95,6 +95,8 @@
 
 #include "src/network/networktransport-impl.h"
 
+#include "src/util/compat.h"
+
 using ServerConnection = Network::Transport<Terminal::Complete, Network::UserStream>;
 
 static void serve( int host_fd,
@@ -366,7 +368,7 @@ int main( int argc, char* argv[] )
                native_charset.c_str(),
                client_ctype.str().c_str(),
                client_charset.c_str() );
-      int unused __attribute( ( unused ) ) = system( "locale" );
+      int unused MOSH_UNUSED = system( "locale" );
       exit( 1 );
     }
   }

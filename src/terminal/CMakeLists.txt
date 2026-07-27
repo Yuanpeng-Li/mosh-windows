@@ -1,4 +1,8 @@
-add_library(moshterminal STATIC
+# terminaldisplayinit.cc is the terminfo probe, and there is no terminfo on
+# Windows; it is replaced by a compiled-in capability table as part of the
+# client port. Excluding it here lets everything else -- the parser, the
+# emulator and the framebuffer -- build and be tested under MSVC first.
+set(_moshterminal_sources
   parseraction.cc      parseraction.h
   parser.cc            parser.h
   parserstate.cc       parserstate.h
@@ -7,12 +11,17 @@ add_library(moshterminal STATIC
   terminal.cc          terminal.h
   terminaldispatcher.cc terminaldispatcher.h
   terminaldisplay.cc   terminaldisplay.h
-  terminaldisplayinit.cc
   terminalframebuffer.cc terminalframebuffer.h
   terminalfunctions.cc
   terminaluserinput.cc terminaluserinput.h)
 
-target_link_libraries(moshterminal PUBLIC mosh_common moshutil)
+if(NOT WIN32)
+  list(APPEND _moshterminal_sources terminaldisplayinit.cc)
+endif()
+
+add_library(moshterminal STATIC ${_moshterminal_sources})
+
+target_link_libraries(moshterminal PUBLIC mosh_common moshutil_portable)
 add_dependencies(moshterminal mosh_version)
 
 if(NOT WIN32)

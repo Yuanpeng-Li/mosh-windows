@@ -39,6 +39,8 @@
 #include "src/frontend/terminaloverlay.h"
 #include "src/util/uniwidth.h"
 
+#include "src/util/compat.h"
+
 using namespace Overlay;
 
 void ConditionalOverlayCell::apply( Framebuffer& fb, uint64_t confirmed_epoch, int row, bool flag ) const
@@ -72,7 +74,7 @@ void ConditionalOverlayCell::apply( Framebuffer& fb, uint64_t confirmed_epoch, i
 
 Validity ConditionalOverlayCell::get_validity( const Framebuffer& fb,
                                                int row,
-                                               uint64_t early_ack __attribute__( ( unused ) ),
+                                               uint64_t early_ack MOSH_UNUSED,
                                                uint64_t late_ack ) const
 {
   if ( !active ) {
@@ -113,7 +115,7 @@ Validity ConditionalOverlayCell::get_validity( const Framebuffer& fb,
 }
 
 Validity ConditionalCursorMove::get_validity( const Framebuffer& fb,
-                                              uint64_t early_ack __attribute( ( unused ) ),
+                                              uint64_t early_ack MOSH_UNUSED,
                                               uint64_t late_ack ) const
 {
   if ( !active ) {

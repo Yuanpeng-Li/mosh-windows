@@ -61,13 +61,15 @@
 #include "src/util/select.h"
 #include "src/util/swrite.h"
 
+#include "src/util/compat.h"
+
 const size_t buf_size = 1024;
 
 static void emulate_terminal( int fd );
 static int copy( int src, int dest );
 static int vt_parser( int fd, Parser::UTF8Parser* parser );
 
-int main( int argc __attribute__( ( unused ) ), char* argv[] __attribute__( ( unused ) ), char* envp[] )
+int main( int argc MOSH_UNUSED, char* argv[] MOSH_UNUSED, char* envp[] )
 {
   int master;
   struct termios saved_termios, raw_termios, child_termios;

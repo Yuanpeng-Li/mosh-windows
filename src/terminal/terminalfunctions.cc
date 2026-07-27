@@ -36,11 +36,12 @@
 #include <utility>
 #include <vector>
 
-#include <unistd.h>
 
 #include "src/terminal/parseraction.h"
 #include "src/terminal/terminalframebuffer.h"
 #include "terminaldispatcher.h"
+
+#include "src/util/compat.h"
 
 using namespace Terminal;
 
@@ -137,7 +138,7 @@ static Function func_CSI_cursormove_H( CSI, "H", CSI_cursormove );
 static Function func_CSI_cursormove_f( CSI, "f", CSI_cursormove );
 
 /* device attributes */
-static void CSI_DA( Framebuffer* fb __attribute( ( unused ) ), Dispatcher* dispatch )
+static void CSI_DA( Framebuffer* fb MOSH_UNUSED, Dispatcher* dispatch )
 {
   dispatch->terminal_to_host.append( "\033[?62c" ); /* plain vt220 */
 }
@@ -145,7 +146,7 @@ static void CSI_DA( Framebuffer* fb __attribute( ( unused ) ), Dispatcher* dispa
 static Function func_CSI_DA( CSI, "c", CSI_DA );
 
 /* secondary device attributes */
-static void CSI_SDA( Framebuffer* fb __attribute( ( unused ) ), Dispatcher* dispatch )
+static void CSI_SDA( Framebuffer* fb MOSH_UNUSED, Dispatcher* dispatch )
 {
   dispatch->terminal_to_host.append( "\033[>1;10;0c" ); /* plain vt220 */
 }
@@ -153,7 +154,7 @@ static void CSI_SDA( Framebuffer* fb __attribute( ( unused ) ), Dispatcher* disp
 static Function func_CSI_SDA( CSI, ">c", CSI_SDA );
 
 /* screen alignment diagnostic */
-static void Esc_DECALN( Framebuffer* fb, Dispatcher* dispatch __attribute( ( unused ) ) )
+static void Esc_DECALN( Framebuffer* fb, Dispatcher* dispatch MOSH_UNUSED )
 {
   for ( int y = 0; y < fb->ds.get_height(); y++ ) {
     for ( int x = 0; x < fb->ds.get_width(); x++ ) {
@@ -166,7 +167,7 @@ static void Esc_DECALN( Framebuffer* fb, Dispatcher* dispatch __attribute( ( unu
 static Function func_Esc_DECALN( ESCAPE, "#8", Esc_DECALN );
 
 /* line feed */
-static void Ctrl_LF( Framebuffer* fb, Dispatcher* dispatch __attribute( ( unused ) ) )
+static void Ctrl_LF( Framebuffer* fb, Dispatcher* dispatch MOSH_UNUSED )
 {
   fb->move_rows_autoscroll( 1 );
 }
@@ -178,7 +179,7 @@ static Function func_Ctrl_VT( CONTROL, "\x0b", Ctrl_LF );
 static Function func_Ctrl_FF( CONTROL, "\x0c", Ctrl_LF );
 
 /* carriage return */
-static void Ctrl_CR( Framebuffer* fb, Dispatcher* dispatch __attribute( ( unused ) ) )
+static void Ctrl_CR( Framebuffer* fb, Dispatcher* dispatch MOSH_UNUSED )
 {
   fb->ds.move_col( 0 );
 }
@@ -186,7 +187,7 @@ static void Ctrl_CR( Framebuffer* fb, Dispatcher* dispatch __attribute( ( unused
 static Function func_Ctrl_CR( CONTROL, "\x0d", Ctrl_CR );
 
 /* backspace */
-static void Ctrl_BS( Framebuffer* fb, Dispatcher* dispatch __attribute( ( unused ) ) )
+static void Ctrl_BS( Framebuffer* fb, Dispatcher* dispatch MOSH_UNUSED )
 {
   fb->ds.move_col( -1, true );
 }
@@ -194,7 +195,7 @@ static void Ctrl_BS( Framebuffer* fb, Dispatcher* dispatch __attribute( ( unused
 static Function func_Ctrl_BS( CONTROL, "\x08", Ctrl_BS );
 
 /* reverse index -- like a backwards line feed */
-static void Ctrl_RI( Framebuffer* fb, Dispatcher* dispatch __attribute( ( unused ) ) )
+static void Ctrl_RI( Framebuffer* fb, Dispatcher* dispatch MOSH_UNUSED )
 {
   fb->move_rows_autoscroll( -1 );
 }
@@ -202,7 +203,7 @@ static void Ctrl_RI( Framebuffer* fb, Dispatcher* dispatch __attribute( ( unused
 static Function func_Ctrl_RI( CONTROL, "\x8D", Ctrl_RI );
 
 /* newline */
-static void Ctrl_NEL( Framebuffer* fb, Dispatcher* dispatch __attribute( ( unused ) ) )
+static void Ctrl_NEL( Framebuffer* fb, Dispatcher* dispatch MOSH_UNUSED )
 {
   fb->ds.move_col( 0 );
   fb->move_rows_autoscroll( 1 );
@@ -226,7 +227,7 @@ static void HT_n( Framebuffer* fb, size_t count )
   fb->ds.next_print_will_wrap = wrap_state_save;
 }
 
-static void Ctrl_HT( Framebuffer* fb, Dispatcher* dispatch __attribute( ( unused ) ) )
+static void Ctrl_HT( Framebuffer* fb, Dispatcher* dispatch MOSH_UNUSED )
 {
   HT_n( fb, 1 );
 }
@@ -248,7 +249,7 @@ static Function func_CSI_CHT( CSI, "I", CSI_CxT, false );
 static Function func_CSI_CBT( CSI, "Z", CSI_CxT, false );
 
 /* horizontal tab set */
-static void Ctrl_HTS( Framebuffer* fb, Dispatcher* dispatch __attribute( ( unused ) ) )
+static void Ctrl_HTS( Framebuffer* fb, Dispatcher* dispatch MOSH_UNUSED )
 {
   fb->ds.set_tab();
 }
@@ -405,7 +406,7 @@ static void CSI_DECSTBM( Framebuffer* fb, Dispatcher* dispatch )
 static Function func_CSI_DECSTMB( CSI, "r", CSI_DECSTBM );
 
 /* terminal bell */
-static void Ctrl_BEL( Framebuffer* fb, Dispatcher* dispatch __attribute( ( unused ) ) )
+static void Ctrl_BEL( Framebuffer* fb, Dispatcher* dispatch MOSH_UNUSED )
 {
   fb->ring_bell();
 }
@@ -455,12 +456,12 @@ static void CSI_SGR( Framebuffer* fb, Dispatcher* dispatch )
 static Function func_CSI_SGR( CSI, "m", CSI_SGR, false ); /* changing renditions doesn't clear wrap flag */
 
 /* save and restore cursor */
-static void Esc_DECSC( Framebuffer* fb, Dispatcher* dispatch __attribute( ( unused ) ) )
+static void Esc_DECSC( Framebuffer* fb, Dispatcher* dispatch MOSH_UNUSED )
 {
   fb->ds.save_cursor();
 }
 
-static void Esc_DECRC( Framebuffer* fb, Dispatcher* dispatch __attribute( ( unused ) ) )
+static void Esc_DECRC( Framebuffer* fb, Dispatcher* dispatch MOSH_UNUSED )
 {
   fb->ds.restore_cursor();
 }
@@ -575,7 +576,7 @@ static void CSI_ECH( Framebuffer* fb, Dispatcher* dispatch )
 static Function func_CSI_ECH( CSI, "X", CSI_ECH );
 
 /* reset to initial state */
-static void Esc_RIS( Framebuffer* fb, Dispatcher* dispatch __attribute( ( unused ) ) )
+static void Esc_RIS( Framebuffer* fb, Dispatcher* dispatch MOSH_UNUSED )
 {
   fb->reset();
 }
@@ -583,7 +584,7 @@ static void Esc_RIS( Framebuffer* fb, Dispatcher* dispatch __attribute( ( unused
 static Function func_Esc_RIS( ESCAPE, "c", Esc_RIS );
 
 /* soft reset */
-static void CSI_DECSTR( Framebuffer* fb, Dispatcher* dispatch __attribute( ( unused ) ) )
+static void CSI_DECSTR( Framebuffer* fb, Dispatcher* dispatch MOSH_UNUSED )
 {
   fb->soft_reset();
 }
@@ -624,7 +625,7 @@ static void OSC_8( const std::string& OSC_string, Framebuffer* fb )
 }
 
 /* xterm uses an Operating System Command to set the window title */
-void Dispatcher::OSC_dispatch( const Parser::OSC_End* act __attribute( ( unused ) ), Framebuffer* fb )
+void Dispatcher::OSC_dispatch( const Parser::OSC_End* act MOSH_UNUSED, Framebuffer* fb )
 {
   /* handle osc copy clipboard sequence 52;c; */
   if ( OSC_string.size() >= 5 && OSC_string[0] == U'5' && OSC_string[1] == U'2' && OSC_string[2] == U';'

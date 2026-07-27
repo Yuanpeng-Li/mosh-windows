@@ -30,18 +30,19 @@
     also delete it here.
 */
 
-#include <cstdio>
+#ifndef MOSH_COMPAT_HPP
+#define MOSH_COMPAT_HPP
 
-#include "src/util/locale_utils.h"
+/* Small compiler and platform spellings that are not worth a header each.
+   Keep this cheap to include: no system headers, no dependencies. */
 
-#include "src/util/compat.h"
+/* Marks a parameter that is deliberately unused. mosh spelled this as GCC's
+   unused attribute directly, which MSVC rejects outright -- not as a warning,
+   as a syntax error. */
+#if defined( __GNUC__ ) || defined( __clang__ )
+#define MOSH_UNUSED __attribute__( ( unused ) )
+#else
+#define MOSH_UNUSED
+#endif
 
-int main( int argc MOSH_UNUSED, char** argv MOSH_UNUSED )
-{
-  set_native_locale();
-  if ( !is_utf8_locale() ) {
-    fprintf( stderr, "not a UTF-8 locale\n" );
-    return 1;
-  }
-  return 0;
-}
+#endif

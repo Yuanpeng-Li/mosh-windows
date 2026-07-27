@@ -89,8 +89,8 @@ static void test_roundtrip( void )
     size_t got = Util::utf8_decode( &back, buf, n );
     if ( got != ( wc == 0 ? 0u : n ) || back != wc ) {
       char d[128];
-      snprintf( d, sizeof d, "U+%04X encoded as %s decoded to U+%04X (ret %zd)", (unsigned)wc,
-                hex( buf, n ).c_str(), (unsigned)back, (ssize_t)got );
+      snprintf( d, sizeof d, "U+%04X encoded as %s decoded to U+%04X (ret %lld)", (unsigned)wc,
+                hex( buf, n ).c_str(), (unsigned)back, (long long)got );
       fail( "round trip", d );
     }
     /* Every proper prefix must report INCOMPLETE, never INVALID: that is what
@@ -189,8 +189,8 @@ static void compare_with_libc( const char* bytes, size_t n )
 
   if ( mine_bad != their_bad || mine_short != their_short ) {
     char d[192];
-    snprintf( d, sizeof d, "%s -- mine %zd, libc %zd", hex( bytes, n ).c_str(), (ssize_t)mine_ret,
-              (ssize_t)their_ret );
+    snprintf( d, sizeof d, "%s -- mine %lld, libc %lld", hex( bytes, n ).c_str(), (long long)mine_ret,
+              (long long)their_ret );
     fail( "disagreement on validity", d );
     return;
   }

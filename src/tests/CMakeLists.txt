@@ -16,17 +16,17 @@ add_executable(test-nonce-incr nonce-incr.cc)
 target_link_libraries(test-nonce-incr PRIVATE mosh_common moshnetwork moshcrypto moshutil)
 
 add_executable(test-utf8 utf8.cc)
-target_link_libraries(test-utf8 PRIVATE mosh_common moshutil)
+target_link_libraries(test-utf8 PRIVATE mosh_common moshutil_portable)
 add_test(NAME utf8 COMMAND test-utf8)
 
 add_executable(test-uniwidth uniwidth.cc)
-target_link_libraries(test-uniwidth PRIVATE mosh_common moshutil)
+target_link_libraries(test-uniwidth PRIVATE mosh_common moshutil_portable)
 add_test(NAME uniwidth COMMAND test-uniwidth)
 
 # The end-to-end character path. Portable on purpose: this is the test that
 # catches the 16-bit wchar_t bug, and it has to be runnable on Windows.
 add_executable(test-unicode-roundtrip unicode-roundtrip.cc)
-target_link_libraries(test-unicode-roundtrip PRIVATE mosh_common moshterminal moshutil)
+target_link_libraries(test-unicode-roundtrip PRIVATE mosh_common moshterminal moshutil_portable)
 add_test(NAME unicode-roundtrip COMMAND test-unicode-roundtrip)
 
 add_test(NAME ocb-aes         COMMAND test-ocb-aes)

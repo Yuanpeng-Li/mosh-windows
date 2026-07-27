@@ -8,3 +8,6 @@
 /*.d/
 *.log
 *.trs
+/utf8
+/uniwidth
+/unicode-roundtrip

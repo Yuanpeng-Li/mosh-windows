@@ -40,6 +40,8 @@
 #include "src/terminal/terminalframebuffer.h"
 #include "terminaldispatcher.h"
 
+#include "src/util/compat.h"
+
 using namespace Terminal;
 
 static const size_t MAXIMUM_CLIPBOARD_SIZE = 16 * 1024;
@@ -68,7 +70,7 @@ void Dispatcher::collect( const Parser::Collect* act )
   }
 }
 
-void Dispatcher::clear( const Parser::Clear* act __attribute( ( unused ) ) )
+void Dispatcher::clear( const Parser::Clear* act MOSH_UNUSED )
 {
   params.clear();
   dispatch_chars.clear();
@@ -245,7 +247,7 @@ void Dispatcher::OSC_put( const Parser::OSC_Put* act )
   }
 }
 
-void Dispatcher::OSC_start( const Parser::OSC_Start* act __attribute( ( unused ) ) )
+void Dispatcher::OSC_start( const Parser::OSC_Start* act MOSH_UNUSED )
 {
   OSC_string.clear();
 }

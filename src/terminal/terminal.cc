@@ -35,7 +35,6 @@
 #include <cstring>
 #include <typeinfo>
 
-#include <unistd.h>
 
 #include "src/terminal/terminal.h"
 #include "src/util/uniwidth.h"
