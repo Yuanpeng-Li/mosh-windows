@@ -76,6 +76,15 @@ bool Console::set_raw( void )
   }
 
   struct termios raw = impl->saved;
+
+#ifdef HAVE_IUTF8
+  /* Probably unnecessary since raw mode follows, but preserved from the code
+     this replaced. */
+  if ( !( raw.c_iflag & IUTF8 ) ) {
+    raw.c_iflag |= IUTF8;
+  }
+#endif
+
   cfmakeraw( &raw );
 
   if ( tcsetattr( STDIN_FILENO, TCSANOW, &raw ) < 0 ) {
@@ -121,6 +130,16 @@ mosh_fd_t Console::output( void )
 mosh_fd_t Console::input( void )
 {
   return STDIN_FILENO;
+}
+
+
+ssize_t Console::read_input( char* buf, size_t len )
+{
+  const ssize_t n = ::read( STDIN_FILENO, buf, len );
+  if ( n < 0 ) {
+    perror( "read" );
+  }
+  return n;
 }
 
 }

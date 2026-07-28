@@ -281,6 +281,17 @@ public:
   SavedCursor();
 };
 
+/* winuser.h defines DrawState as a macro expanding to DrawStateA or
+   DrawStateW, which silently renames this class and then fails at link time
+   with an unresolved DrawStateA::move_row. mosh's headers are reached from
+   translation units that include <windows.h> -- through winsock2.h -- so the
+   macro has to be removed rather than avoided. A scan of mosh's identifiers
+   against every A/W macro in the Windows headers found this and nothing
+   else. */
+#if defined( _WIN32 ) && defined( DrawState )
+#undef DrawState
+#endif
+
 class DrawState
 {
 private:

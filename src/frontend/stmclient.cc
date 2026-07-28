@@ -40,23 +40,15 @@
 #include <cstring>
 #include <ctime>
 
-#include <err.h>
-#include <pwd.h>
-#include <sys/ioctl.h>
+#if !defined( _WIN32 )
 #include <sys/types.h>
 #include <unistd.h>
-
-#if HAVE_PTY_H
-#include <pty.h>
-#elif HAVE_UTIL_H
-#include <util.h>
 #endif
 
 #include "src/statesync/completeterminal.h"
 #include "src/statesync/user.h"
 #include "src/util/fatal_assert.h"
 #include "src/util/locale_utils.h"
-#include "src/util/pty_compat.h"
 #include "src/util/select.h"
 #include "src/util/swrite.h"
 #include "src/util/timestamp.h"
@@ -65,12 +57,12 @@
 #include "src/network/networktransport-impl.h"
 
 #include "src/util/compat.h"
+#include "src/util/utf8.h"
 
 void STMClient::resume( void )
 {
-  /* Restore termios state */
-  if ( tcsetattr( STDIN_FILENO, TCSANOW, &raw_termios ) < 0 ) {
-    perror( "tcsetattr" );
+  /* Back into raw mode */
+  if ( !console.set_raw() ) {
     exit( 1 );
   }
 
@@ -93,31 +85,18 @@ void STMClient::init( void )
              "the character set \"%s\".\n\n",
              native_ctype.str().c_str(),
              native_charset.c_str() );
+#if !defined( _WIN32 )
     int unused MOSH_UNUSED = system( "locale" );
+#endif
     exit( 1 );
   }
 
-  /* Verify terminal configuration */
-  if ( tcgetattr( STDIN_FILENO, &saved_termios ) < 0 ) {
-    perror( "tcgetattr" );
+  /* Capture the terminal's state so it can be put back, then take it over. */
+  if ( !console.save() ) {
+    fprintf( stderr, "mosh-client: standard input is not a terminal.\n" );
     exit( 1 );
   }
-
-  /* Put terminal driver in raw mode */
-  raw_termios = saved_termios;
-
-#ifdef HAVE_IUTF8
-  if ( !( raw_termios.c_iflag & IUTF8 ) ) {
-    //    fprintf( stderr, "Warning: Locale is UTF-8 but termios IUTF8 flag not set. Setting IUTF8 flag.\n" );
-    /* Probably not really necessary since we are putting terminal driver into raw mode anyway. */
-    raw_termios.c_iflag |= IUTF8;
-  }
-#endif /* HAVE_IUTF8 */
-
-  cfmakeraw( &raw_termios );
-
-  if ( tcsetattr( STDIN_FILENO, TCSANOW, &raw_termios ) < 0 ) {
-    perror( "tcsetattr" );
+  if ( !console.set_raw() ) {
     exit( 1 );
   }
 
@@ -126,7 +105,7 @@ void STMClient::init( void )
 
   /* Add our name to window title */
   if ( !getenv( "MOSH_TITLE_NOPREFIX" ) ) {
-    overlays.set_title_prefix( std::wstring( L"[mosh] " ) );
+    overlays.set_title_prefix( std::u32string( U"[mosh] " ) );
   }
 
   /* Set terminal escape key. */
@@ -191,33 +170,30 @@ void STMClient::init( void )
     }
     std::string tmp;
     tmp = std::string( escape_pass_name_buf );
-    std::wstring escape_pass_name = std::wstring( tmp.begin(), tmp.end() );
+    std::u32string escape_pass_name = Util::utf8_to_u32( tmp );
     tmp = std::string( escape_key_name_buf );
-    std::wstring escape_key_name = std::wstring( tmp.begin(), tmp.end() );
+    std::u32string escape_key_name = Util::utf8_to_u32( tmp );
     escape_key_help
-      = L"Commands: Ctrl-Z suspends, \".\" quits, " + escape_pass_name + L" gives literal " + escape_key_name;
+      = U"Commands: Ctrl-Z suspends, \".\" quits, " + escape_pass_name + U" gives literal " + escape_key_name;
     overlays.get_notification_engine().set_escape_key_string( tmp );
   }
-  wchar_t tmp[128];
-  swprintf( tmp, 128, L"Nothing received from server on UDP port %s.", port.c_str() );
-  connecting_notification = std::wstring( tmp );
+  char tmp[128];
+  snprintf( tmp, sizeof tmp, "Nothing received from server on UDP port %s.", port.c_str() );
+  connecting_notification = Util::utf8_to_u32( tmp );
 }
 
 void STMClient::shutdown( void )
 {
   /* Restore screen state */
-  overlays.get_notification_engine().set_notification_string( std::wstring( L"" ) );
+  overlays.get_notification_engine().set_notification_string( std::u32string( U"" ) );
   overlays.get_notification_engine().server_heard( timestamp() );
-  overlays.set_title_prefix( std::wstring( L"" ) );
+  overlays.set_title_prefix( std::u32string( U"" ) );
   output_new_frame();
 
   /* Restore terminal and terminal-driver state */
   swrite( mosh_stdout_fd(), display.close().c_str() );
 
-  if ( tcsetattr( STDIN_FILENO, TCSANOW, &saved_termios ) < 0 ) {
-    perror( "tcsetattr" );
-    exit( 1 );
-  }
+  console.restore();
 
   if ( still_connecting() ) {
     fprintf( stderr,
@@ -246,13 +222,13 @@ void STMClient::main_init( void )
   sel.add_signal( SIGCONT );
 
   /* get initial window size */
-  if ( ioctl( STDIN_FILENO, TIOCGWINSZ, &window_size ) < 0 ) {
-    perror( "ioctl TIOCGWINSZ" );
+  if ( !console.get_size( window_width, window_height ) ) {
+    fprintf( stderr, "mosh-client: cannot determine the terminal size.\n" );
     return;
   }
 
   /* local state */
-  local_framebuffer = Terminal::Framebuffer( window_size.ws_col, window_size.ws_row );
+  local_framebuffer = Terminal::Framebuffer( window_width, window_height );
   new_state = Terminal::Framebuffer( 1, 1 );
 
   /* initialize screen */
@@ -261,13 +237,13 @@ void STMClient::main_init( void )
 
   /* open network */
   Network::UserStream blank;
-  Terminal::Complete local_terminal( window_size.ws_col, window_size.ws_row );
+  Terminal::Complete local_terminal( window_width, window_height );
   network = NetworkPointer( new NetworkType( blank, local_terminal, key.c_str(), ip.c_str(), port.c_str() ) );
 
   network->set_send_delay( 1 ); /* minimal delay on outgoing keystrokes */
 
   /* tell server the size of the terminal */
-  network->get_current_state().push_back( Parser::Resize( window_size.ws_col, window_size.ws_row ) );
+  network->get_current_state().push_back( Parser::Resize( window_width, window_height ) );
 
   /* be noisy as necessary */
   network->set_verbose( verbose );
@@ -315,7 +291,7 @@ bool STMClient::process_user_input( int fd )
   char buf[buf_size];
 
   /* fill buffer if possible */
-  ssize_t bytes_read = read( fd, buf, buf_size );
+  ssize_t bytes_read = Terminal::Console::read_input( buf, buf_size );
   if ( bytes_read == 0 ) { /* EOF */
     return false;
   } else if ( bytes_read < 0 ) {
@@ -346,7 +322,7 @@ bool STMClient::process_user_input( int fd )
     if ( quit_sequence_started ) {
       if ( the_byte == '.' ) { /* Quit sequence is Ctrl-^ . */
         if ( net.has_remote_addr() && ( !net.shutdown_in_progress() ) ) {
-          overlays.get_notification_engine().set_notification_string( std::wstring( L"Exiting on user request..." ),
+          overlays.get_notification_engine().set_notification_string( std::u32string( U"Exiting on user request..." ),
                                                                       true );
           net.start_shutdown();
           return true;
@@ -355,18 +331,17 @@ bool STMClient::process_user_input( int fd )
       } else if ( the_byte == 0x1a ) { /* Suspend sequence is escape_key Ctrl-Z */
         /* Restore terminal and terminal-driver state */
         swrite( mosh_stdout_fd(), display.close().c_str() );
-
-        if ( tcsetattr( STDIN_FILENO, TCSANOW, &saved_termios ) < 0 ) {
-          perror( "tcsetattr" );
-          exit( 1 );
-        }
+        console.restore();
 
         fputs( "\n\033[37;44m[mosh is suspended.]\033[m\n", stdout );
-
         fflush( NULL );
 
-        /* actually suspend */
-        kill( 0, SIGSTOP );
+        if ( !Terminal::Console::suspend_self() ) {
+          /* No job control here -- Windows. Say so rather than appearing to
+             hang, and carry on with the session. */
+          fputs( "\033[37;44m[suspend is not available on this platform]\033[m\n", stdout );
+          fflush( NULL );
+        }
 
         resume();
       } else if ( ( the_byte == escape_pass_key ) || ( the_byte == escape_pass_key2 ) ) {
@@ -382,7 +357,7 @@ bool STMClient::process_user_input( int fd )
       quit_sequence_started = false;
 
       if ( overlays.get_notification_engine().get_notification_string() == escape_key_help ) {
-        overlays.get_notification_engine().set_notification_string( L"" );
+        overlays.get_notification_engine().set_notification_string( U"" );
       }
 
       continue;
@@ -412,13 +387,13 @@ bool STMClient::process_user_input( int fd )
 bool STMClient::process_resize( void )
 {
   /* get new size */
-  if ( ioctl( STDIN_FILENO, TIOCGWINSZ, &window_size ) < 0 ) {
-    perror( "ioctl TIOCGWINSZ" );
+  if ( !console.get_size( window_width, window_height ) ) {
+    fprintf( stderr, "mosh-client: cannot determine the terminal size.\n" );
     return false;
   }
 
   /* tell remote emulator */
-  Parser::Resize res( window_size.ws_col, window_size.ws_row );
+  Parser::Resize res( window_width, window_height );
 
   if ( !network->shutdown_in_progress() ) {
     network->get_current_state().push_back( res );
@@ -467,7 +442,7 @@ bool STMClient::main( void )
       for ( std::vector<Network::socket_t>::const_iterator it = fd_list.begin(); it != fd_list.end(); it++ ) {
         sel.add_socket( *it );
       }
-      sel.add_handle( STDIN_FILENO );
+      sel.add_handle( Terminal::Console::input() );
 
       int active_fds = sel.select( wait_time );
       if ( active_fds < 0 ) {
@@ -489,12 +464,12 @@ bool STMClient::main( void )
         process_network_input();
       }
 
-      if ( sel.read_handle( STDIN_FILENO )
-           && !process_user_input( STDIN_FILENO ) ) { /* input from the user needs to be fed to the network */
+      if ( sel.read_handle( Terminal::Console::input() )
+           && !process_user_input( 0 ) ) { /* input from the user needs to be fed to the network */
         if ( !network->has_remote_addr() ) {
           break;
         } else if ( !network->shutdown_in_progress() ) {
-          overlays.get_notification_engine().set_notification_string( std::wstring( L"Exiting..." ), true );
+          overlays.get_notification_engine().set_notification_string( std::u32string( U"Exiting..." ), true );
           network->start_shutdown();
         }
       }
@@ -513,7 +488,7 @@ bool STMClient::main( void )
           break;
         } else if ( !network->shutdown_in_progress() ) {
           overlays.get_notification_engine().set_notification_string(
-            std::wstring( L"Signal received, shutting down..." ), true );
+            std::u32string( U"Signal received, shutting down..." ), true );
           network->start_shutdown();
         }
       }
@@ -541,7 +516,7 @@ bool STMClient::main( void )
         if ( timestamp() - network->get_latest_remote_state().timestamp > 15000 ) {
           if ( !network->shutdown_in_progress() ) {
             overlays.get_notification_engine().set_notification_string(
-              std::wstring( L"Timed out waiting for server..." ), true );
+              std::u32string( U"Timed out waiting for server..." ), true );
             network->start_shutdown();
           }
         } else {
@@ -549,7 +524,7 @@ bool STMClient::main( void )
         }
       } else if ( ( network->get_remote_state_num() != 0 )
                   && ( overlays.get_notification_engine().get_notification_string() == connecting_notification ) ) {
-        overlays.get_notification_engine().set_notification_string( L"" );
+        overlays.get_notification_engine().set_notification_string( U"" );
       }
 
       network->tick();
@@ -575,9 +550,9 @@ bool STMClient::main( void )
       if ( e.fatal ) {
         throw;
       } else {
-        wchar_t tmp[128];
-        swprintf( tmp, 128, L"Crypto exception: %s", e.what() );
-        overlays.get_notification_engine().set_notification_string( std::wstring( tmp ) );
+        char tmp[128];
+        snprintf( tmp, sizeof tmp, "Crypto exception: %s", e.what() );
+        overlays.get_notification_engine().set_notification_string( Util::utf8_to_u32( tmp ) );
       }
     }
   }

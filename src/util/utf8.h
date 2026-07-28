@@ -35,6 +35,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 /* A UTF-8 codec that does not depend on the process locale.
  *
@@ -107,6 +108,16 @@ size_t utf8_decode( char32_t* pwc, const char* s, size_t n );
  * U+FFFD rather than returning an error the caller might add to a pointer.
  */
 size_t utf8_encode( char out[4], char32_t wc );
+
+/* Whole-string conversions, for text that crosses between the byte world and
+   the code-point world -- mosh's own status messages, which are formatted as
+   bytes and then drawn one character at a time.
+
+   Malformed input becomes U+FFFD rather than an error: these are diagnostics,
+   and failing to render "connection lost" because it arrived mis-encoded would
+   be the worse outcome. */
+std::u32string utf8_to_u32( const std::string& in );
+std::string u32_to_utf8( const std::u32string& in );
 
 }
 

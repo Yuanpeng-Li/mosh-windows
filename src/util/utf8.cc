@@ -147,4 +147,36 @@ size_t utf8_encode( char out[UTF8_MAX_LEN], char32_t wc )
   return len;
 }
 
+
+std::u32string utf8_to_u32( const std::string& in )
+{
+  std::u32string out;
+  out.reserve( in.size() );
+  size_t i = 0;
+  while ( i < in.size() ) {
+    char32_t wc = 0;
+    const size_t n = utf8_decode( &wc, in.data() + i, in.size() - i );
+    if ( n == UTF8_INVALID || n == UTF8_INCOMPLETE ) {
+      out.push_back( UTF8_REPLACEMENT );
+      i++; /* resynchronise on the next byte */
+      continue;
+    }
+    out.push_back( wc );
+    i += ( n == 0 ) ? 1 : n; /* a decoded NUL consumes one byte */
+  }
+  return out;
+}
+
+std::string u32_to_utf8( const std::u32string& in )
+{
+  std::string out;
+  out.reserve( in.size() );
+  char buf[UTF8_MAX_LEN];
+  for ( size_t i = 0; i < in.size(); i++ ) {
+    const size_t n = utf8_encode( buf, in[i] );
+    out.append( buf, n );
+  }
+  return out;
+}
+
 }

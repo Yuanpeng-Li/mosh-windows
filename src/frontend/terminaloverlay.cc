@@ -202,7 +202,7 @@ void NotificationEngine::apply( Framebuffer& fb ) const
   }
 
   /* write message */
-  wchar_t tmp[128];
+  char tmp[128];
 
   /* We want to prefer the "last contact" message if we simply haven't
      heard from the server in a while, but print the "last reply" message
@@ -228,39 +228,47 @@ void NotificationEngine::apply( Framebuffer& fb ) const
   if ( message.empty() && ( !time_expired ) ) {
     return;
   }
+  /* Formatted as bytes and converted once, rather than with swprintf. The
+     wide-format version mixed %ls and %s, which do not mean the same thing on
+     every C library: in a wide format string glibc reads %s as a narrow
+     string, while the MSVC CRT reads it as a wide one unless
+     _CRT_STDIO_ISO_WIDE_SPECIFIERS is defined. Narrow formatting has no such
+     ambiguity, and these messages are mosh's own. */
+  const std::string message_utf8 = Util::u32_to_utf8( message );
+
   if ( message.empty() && time_expired ) {
-    swprintf( tmp,
-              128,
-              L"mosh: Last %s %s ago.%s",
+    snprintf( tmp,
+              sizeof tmp,
+              "mosh: Last %s %s ago.%s",
               explanation,
               human_readable_duration( static_cast<int>( time_elapsed ), "seconds" ).c_str(),
               keystroke_str );
   } else if ( ( !message.empty() ) && ( !time_expired ) ) {
-    swprintf( tmp, 128, L"mosh: %ls%s", message.c_str(), keystroke_str );
+    snprintf( tmp, sizeof tmp, "mosh: %s%s", message_utf8.c_str(), keystroke_str );
   } else {
-    swprintf( tmp,
-              128,
-              L"mosh: %ls (%s without %s.)%s",
-              message.c_str(),
+    snprintf( tmp,
+              sizeof tmp,
+              "mosh: %s (%s without %s.)%s",
+              message_utf8.c_str(),
               human_readable_duration( static_cast<int>( time_elapsed ), "s" ).c_str(),
               explanation,
               keystroke_str );
   }
 
-  std::wstring string_to_draw( tmp );
+  std::u32string string_to_draw( Util::utf8_to_u32( tmp ) );
 
   int overlay_col = 0;
 
   Cell* combining_cell = fb.get_mutable_cell( 0, 0 );
 
   /* We unfortunately duplicate the terminal's logic for how to render a Unicode sequence into graphemes */
-  for ( std::wstring::const_iterator i = string_to_draw.begin(); i != string_to_draw.end(); i++ ) {
+  for ( std::u32string::const_iterator i = string_to_draw.begin(); i != string_to_draw.end(); i++ ) {
     if ( overlay_col >= fb.ds.get_width() ) {
       break;
     }
 
-    wchar_t ch = *i;
-    int chwidth = ch == L'\0' ? -1 : wcwidth( ch );
+    char32_t ch = *i;
+    int chwidth = ch == 0 ? -1 : Util::uniwidth( ch );
     Cell* this_cell = 0;
 
     switch ( chwidth ) {
@@ -338,7 +346,7 @@ void OverlayManager::apply( Framebuffer& fb )
   title.apply( fb );
 }
 
-void TitleEngine::set_prefix( const std::wstring& s )
+void TitleEngine::set_prefix( const std::u32string& s )
 {
   prefix = Terminal::Framebuffer::title_type( s.begin(), s.end() );
 }

@@ -170,4 +170,24 @@ mosh_fd_t Console::input( void )
   return GetStdHandle( STD_INPUT_HANDLE );
 }
 
+
+ssize_t Console::read_input( char* buf, size_t len )
+{
+  /* ReadFile rather than ReadConsoleInput: with ENABLE_VIRTUAL_TERMINAL_INPUT
+     the console translates key events into the same escape sequences a POSIX
+     terminal driver produces, so the parser above sees one stream on both
+     platforms. Window resizes do not appear here -- they arrive as console
+     input records and are read separately. */
+  DWORD n = 0;
+  if ( !ReadFile( GetStdHandle( STD_INPUT_HANDLE ), buf, static_cast<DWORD>( len ), &n, NULL ) ) {
+    const DWORD err = GetLastError();
+    if ( err == ERROR_BROKEN_PIPE || err == ERROR_HANDLE_EOF ) {
+      return 0;
+    }
+    fprintf( stderr, "read: console read failed (error %lu)\n", err );
+    return -1;
+  }
+  return static_cast<ssize_t>( n );
+}
+
 }

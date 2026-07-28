@@ -40,6 +40,7 @@
 
 #include <climits>
 #include <vector>
+#include "src/util/utf8.h"
 
 namespace Overlay {
 using namespace Terminal;
@@ -151,7 +152,7 @@ private:
   uint64_t last_word_from_server;
   uint64_t last_acked_state;
   std::string escape_key_string;
-  std::wstring message;
+  std::u32string message;
   bool message_is_network_error;
   uint64_t message_expiration;
   bool show_quit_keystroke;
@@ -163,12 +164,12 @@ private:
 public:
   void adjust_message( void );
   void apply( Framebuffer& fb ) const;
-  const std::wstring& get_notification_string( void ) const { return message; }
+  const std::u32string& get_notification_string( void ) const { return message; }
   void server_heard( uint64_t s_last_word ) { last_word_from_server = s_last_word; }
   void server_acked( uint64_t s_last_acked ) { last_acked_state = s_last_acked; }
   int wait_time( void ) const;
 
-  void set_notification_string( const std::wstring& s_message,
+  void set_notification_string( const std::u32string& s_message,
                                 bool permanent = false,
                                 bool s_show_quit_keystroke = true )
   {
@@ -191,10 +192,7 @@ public:
 
   void set_network_error( const std::string& s )
   {
-    wchar_t tmp[128];
-    swprintf( tmp, 128, L"%s", s.c_str() );
-
-    message = tmp;
+    message = Util::utf8_to_u32( s );
     message_is_network_error = true;
     message_expiration = timestamp() + Network::ACK_INTERVAL + 100;
   }
@@ -320,7 +318,7 @@ private:
 public:
   void apply( Framebuffer& fb ) const { fb.prefix_window_title( prefix ); }
   TitleEngine() : prefix() {}
-  void set_prefix( const std::wstring& s );
+  void set_prefix( const std::u32string& s );
 };
 
 /* the overlay manager */
@@ -337,7 +335,7 @@ public:
   NotificationEngine& get_notification_engine( void ) { return notifications; }
   PredictionEngine& get_prediction_engine( void ) { return predictions; }
 
-  void set_title_prefix( const std::wstring& s ) { title.set_prefix( s ); }
+  void set_title_prefix( const std::u32string& s ) { title.set_prefix( s ); }
 
   OverlayManager() : notifications(), predictions(), title() {}
 

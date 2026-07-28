@@ -36,8 +36,7 @@
 #include <memory>
 #include <string>
 
-#include <sys/ioctl.h>
-#include <termios.h>
+#include "src/util/console.h"
 
 #include "src/frontend/terminaloverlay.h"
 #include "src/network/networktransport.h"
@@ -55,11 +54,11 @@ private:
   int escape_pass_key;
   int escape_pass_key2;
   bool escape_requires_lf;
-  std::wstring escape_key_help;
+  std::u32string escape_key_help;
 
-  struct termios saved_termios, raw_termios;
 
-  struct winsize window_size;
+  Terminal::Console console;
+  int window_width, window_height;
 
   Terminal::Framebuffer local_framebuffer, new_state;
   Overlay::OverlayManager overlays;
@@ -68,7 +67,7 @@ private:
   NetworkPointer network;
   Terminal::Display display;
 
-  std::wstring connecting_notification;
+  std::u32string connecting_notification;
   bool repaint_requested, lf_entered, quit_sequence_started;
   bool clean_shutdown;
   unsigned int verbose;
@@ -96,8 +95,8 @@ public:
              unsigned int s_verbose,
              const char* predict_overwrite )
     : ip( s_ip ? s_ip : "" ), port( s_port ? s_port : "" ), key( s_key ? s_key : "" ), escape_key( 0x1E ),
-      escape_pass_key( '^' ), escape_pass_key2( '^' ), escape_requires_lf( false ), escape_key_help( L"?" ),
-      saved_termios(), raw_termios(), window_size(), local_framebuffer( 1, 1 ), new_state( 1, 1 ), overlays(),
+      escape_pass_key( '^' ), escape_pass_key2( '^' ), escape_requires_lf( false ), escape_key_help( U"?" ),
+      console(), window_width( 1 ), window_height( 1 ), local_framebuffer( 1, 1 ), new_state( 1, 1 ), overlays(),
       network(), display( true ) /* use TERM environment var to initialize display */, connecting_notification(),
       repaint_requested( false ), lf_entered( false ), quit_sequence_started( false ), clean_shutdown( false ),
       verbose( s_verbose )

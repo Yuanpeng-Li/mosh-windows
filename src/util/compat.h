@@ -52,6 +52,47 @@
 typedef SSIZE_T ssize_t;
 #endif
 
+/* Signals POSIX has and Windows does not. mosh registers interest in these and
+   the Windows Select accepts them as no-ops, so the call sites need no #ifdef.
+   The values only have to be distinct and not collide with the MSVC CRT's own
+   (SIGINT 2, SIGILL 4, SIGABRT 22, SIGFPE 8, SIGSEGV 11, SIGTERM 15,
+   SIGBREAK 21); these are the familiar Linux numbers, which are all free. */
+#if defined( _WIN32 )
+#ifndef SIGHUP
+#define SIGHUP 1
+#endif
+#ifndef SIGPIPE
+#define SIGPIPE 13
+#endif
+#ifndef SIGCONT
+#define SIGCONT 18
+#endif
+#ifndef SIGWINCH
+#define SIGWINCH 28
+#endif
+#ifndef SIGSTOP
+#define SIGSTOP 19
+#endif
+#ifndef SIGUSR1
+#define SIGUSR1 10
+#endif
+#endif
+
+/* POSIX functions the MSVC CRT lacks. Implemented in compat_win32.cc. */
+#if defined( _WIN32 ) && !defined( __MINGW32__ )
+#include <cstddef>
+#include <ctime>
+
+extern "C" {
+extern char* optarg;
+extern int optind, opterr, optopt;
+int getopt( int argc, char* const argv[], const char* optstring );
+int unsetenv( const char* name );
+int setenv( const char* name, const char* value, int overwrite );
+int nanosleep( const struct timespec* req, struct timespec* rem );
+}
+#endif
+
 /* What mosh writes bytes to. A small integer on POSIX; a kernel object handle
    on Windows, where neither the console nor a pipe has a file descriptor
    unless one is manufactured with _open_osfhandle -- and manufacturing one

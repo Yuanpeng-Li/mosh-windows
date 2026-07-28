@@ -96,6 +96,7 @@
 #include "src/network/networktransport-impl.h"
 
 #include "src/util/compat.h"
+#include "src/network/socketio.h"
 
 using ServerConnection = Network::Transport<Terminal::Complete, Network::UserStream>;
 
@@ -179,6 +180,11 @@ static std::string get_SSH_IP( void )
 
 int main( int argc, char* argv[] )
 {
+  /* Winsock has to be started before any socket call, and torn down after the
+     last one. A no-op on POSIX. Declared first so it outlives everything that
+     might use a socket. */
+  Network::SocketSubsystem socket_subsystem;
+
   /* For security, make sure we don't dump core */
   Crypto::disable_dumping_core();
 

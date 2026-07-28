@@ -35,12 +35,15 @@
 
 #include <cstdlib>
 
+#if !defined( _WIN32 )
 #include <unistd.h>
+#endif
 
 #include "src/crypto/crypto.h"
 #include "src/util/fatal_assert.h"
 #include "src/util/locale_utils.h"
 #include "stmclient.h"
+#include "src/network/socketio.h"
 
 /* These need to be included last because of conflicting defines. */
 /*
@@ -48,6 +51,7 @@
  * The solution is to include termio.h also.
  * But Mac OS X doesn't have termio.h, so this needs a guard.
  */
+#if !defined( _WIN32 )
 #ifdef HAVE_TERMIO_H
 #include <termio.h>
 #endif
@@ -70,6 +74,7 @@
 #else
 #error "SysV or X/Open-compatible Curses header file required"
 #endif
+#endif /* !_WIN32 */
 
 static void print_version( FILE* file )
 {
@@ -93,6 +98,13 @@ static void print_usage( FILE* file, const char* argv0 )
 
 static void print_colorcount( void )
 {
+#if defined( _WIN32 )
+  /* No terminfo. Any console that can interpret the sequences mosh emits --
+     which is what the client requires anyway -- handles 256 colours; conhost
+     and Windows Terminal both do since Windows 10 1809. Reported rather than
+     probed, for the same reason the rest of the capabilities are compiled in. */
+  printf( "256\n" );
+#else
   /* check colors */
   setupterm( (char*)0, 1, (int*)0 );
 
@@ -103,10 +115,16 @@ static void print_colorcount( void )
   }
 
   printf( "%d\n", color_val );
+#endif
 }
 
 int main( int argc, char* argv[] )
 {
+  /* Winsock has to be started before any socket call, and torn down after the
+     last one. A no-op on POSIX. Declared first so it outlives everything that
+     might use a socket. */
+  Network::SocketSubsystem socket_subsystem;
+
   unsigned int verbose = 0;
   /* For security, make sure we don't dump core */
   Crypto::disable_dumping_core();

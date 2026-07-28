@@ -24,7 +24,8 @@ if(WIN32)
     swrite_win32.cc       swrite.h
     locale_utils_win32.cc locale_utils.h
     select_win32.cc       select.h
-    console_win32.cc      console.h)
+    console_win32.cc      console.h
+    compat_win32.cc)
   # pty_compat is still missing: forkpty and ioctl, which the ConPTY host
   # replaces.
 else()

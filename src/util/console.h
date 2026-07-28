@@ -88,6 +88,12 @@ public:
   /* What to register with Select in order to be woken by keyboard input. */
   static mosh_fd_t input( void );
 
+  /* Reads what the user has typed. Returns the byte count, 0 at end of input,
+     or -1 on error having reported it. On Windows the console is read as VT
+     input -- the mode set by set_raw() -- so this yields the same escape
+     sequences a POSIX terminal driver would deliver. */
+  static ssize_t read_input( char* buf, size_t len );
+
 private:
   Console( const Console& );
   Console& operator=( const Console& );
