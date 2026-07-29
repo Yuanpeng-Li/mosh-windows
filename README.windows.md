@@ -11,12 +11,26 @@ Both directions work:
 
 | | |
 |---|---|
-| **Out** — `mosh user@host` from Windows to a Linux or macOS server | works |
-| **In** — `mosh user@windows-box` from anywhere, and get a PowerShell session | works, and is the part nobody had done |
+| **Out** — `mosh user@host` from Windows to a Linux or macOS server | works, nothing needed on the far end |
+| **In** — `mosh user@windows-box` from anywhere, and get a PowerShell session | works, and is the part nobody had done — but the **client** needs [one command](#your-linux-or-macos-client-needs-one-thing) first |
 
 Built from mosh's own C++ source, so the terminal emulator, the state-synchronisation
-protocol and the prediction engine are upstream's, not a reimplementation. It
-interoperates with stock mosh 1.4.0 in both directions.
+protocol and the prediction engine are upstream's, not a reimplementation.
+
+About that one command, since it is the first thing people ask. The mosh
+*protocol* is unchanged and stock `mosh-client` 1.4.0 talks to this server
+happily. The stock **launcher** does not: it runs `ssh -n -tt`, and asking
+Windows sshd for a pty makes it run the command under a pseudoconsole, which
+paints a screen instead of forwarding bytes. Measured, connecting from Linux:
+
+```
+mosh user@windows-box                    Did not find mosh server startup message
+mosh --no-ssh-pty user@windows-box       connects
+```
+
+So a stock client works with that flag, every time; or you replace the
+launcher — a Perl script — once, and then it works with no flags. Nothing can
+fix it from the Windows side; `docs/windows-port-notes.md` records the attempts.
 
 ---
 
@@ -219,10 +233,15 @@ Troubleshooting
 ---------------
 
 **`Did not find mosh server startup message`**
-`mosh-server` is not on the remote PATH, or the remote locale is not UTF-8, or
-something in the remote shell's startup files printed first. Check with
-`ssh user@host mosh-server --version`, and try `--locale=en_US.UTF-8`. Against a
-Windows server from a stock client, add `--no-ssh-pty` (see above).
+Against a **Windows** server this is almost always the pty problem, not a
+missing server — add `--no-ssh-pty`, or install the launcher
+([above](#your-linux-or-macos-client-needs-one-thing)). The giveaway is that
+mosh prints a clean `MOSH CONNECT 60001 …` line and then says it did not find
+it; the escape sequences wrapping that line are invisible on a terminal.
+
+Otherwise: `mosh-server` is not on the remote PATH, or the remote locale is not
+UTF-8, or something in the remote shell's startup files printed first. Check
+with `ssh user@host mosh-server --version`, and try `--locale=en_US.UTF-8`.
 
 **`Nothing received from server on UDP port 60001`**
 ssh worked and the server started, but its UDP replies are not arriving. Almost
