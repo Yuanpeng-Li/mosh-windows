@@ -32,24 +32,28 @@ jobs:
     - name: enable vcpkg binary caching
       run: echo "VCPKG_BINARY_SOURCES=clear;x-gha,readwrite" >> $env:GITHUB_ENV
 
-    # vcpkg.json pins builtin-baseline to a specific vcpkg commit, on purpose:
-    # without it protoc and libprotobuf can come from different checkouts and
-    # skew. The runner's preinstalled vcpkg is a shallow clone, so that commit
-    # is not in its history and the configure step dies with
-    #   fatal: path 'versions/baseline.json' exists on disk, but not in '6d9d7df...'
-    # Deepening the clone is the fix that keeps the pin.
-    - name: give vcpkg the history our baseline lives in
+    # vcpkg.json pins builtin-baseline to one vcpkg commit, on purpose: without
+    # it protoc and libprotobuf can come from different checkouts and skew.
+    #
+    # Fetching that commit is not enough. The runner's vcpkg working tree is
+    # newer than our pin, and vcpkg then reads port files whose versions the
+    # pinned version database has never heard of:
+    #   error: no version database entry for vcpkg-cmake-config at 2026-07-21
+    # The tree and the baseline have to be the same commit, so check it out.
+    - name: put vcpkg on the commit our baseline names
       run: |
         $vcpkg = $env:VCPKG_INSTALLATION_ROOT
-        if (Test-Path "$vcpkg\.git\shallow") {
-          git -C $vcpkg fetch --unshallow
-        } else {
-          git -C $vcpkg fetch origin
-        }
         $base = (Get-Content vcpkg.json | ConvertFrom-Json).'builtin-baseline'
+        if (Test-Path "$vcpkg\.git\shallow") { git -C $vcpkg fetch --unshallow } else { git -C $vcpkg fetch origin }
         git -C $vcpkg cat-file -e "$base^{commit}"
-        if ($LASTEXITCODE -ne 0) { throw "vcpkg baseline $base is still not reachable" }
-        Write-Host "vcpkg has baseline $base"
+        if ($LASTEXITCODE -ne 0) { throw "vcpkg does not have baseline $base" }
+        git -C $vcpkg checkout --detach $base
+        if ($LASTEXITCODE -ne 0) { throw "could not check out vcpkg at $base" }
+        # The bundled vcpkg.exe belongs to whatever commit was checked out
+        # before; rebuild it so the tool matches the ports it will read.
+        & "$vcpkg\bootstrap-vcpkg.bat" -disableMetrics
+        if ($LASTEXITCODE -ne 0) { throw "bootstrap-vcpkg failed" }
+        Write-Host "vcpkg tree and baseline are both $base"
 
     # The Visual Studio generator rather than Ninja, so this needs no vcvars
     # step and no third-party action to provide one. It is a multi-config

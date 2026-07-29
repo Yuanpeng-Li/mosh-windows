@@ -76,10 +76,25 @@ std::atomic<int> Select::got_signal[Select::MAX_SIGNAL_NUMBER + 1];
 
 namespace {
 
-/* mosh's frame budget is about 16ms, so a pipe polled this often adds no
-   perceptible latency, and the cost is paid only when a pipe is registered --
-   that is, in mosh-server, which is otherwise idle. */
+/* An anonymous pipe is not a waitable object, so a registered pipe has to be
+   polled: the wait is capped and PeekNamedPipe asked afterwards.
+   PIPE_POLL_MS is the cap while the pipe is active, chosen against mosh's
+   ~16ms frame budget so it adds no perceptible latency.
+
+   It cannot stay the cap forever. mosh-server is meant to sit idle for days,
+   and a permanent 4ms cap is 250 wakeups a second for all of them -- measured
+   at 0.078% of a core, which is little CPU but is exactly the pattern that
+   keeps a laptop out of its deeper idle states. So the cap decays while
+   nothing arrives, and snaps back the moment something does.
+
+   PIPE_IDLE_MAX_MS bounds the worst case: output the shell produced with no
+   input preceding it -- a build finishing, tail -f -- can be delayed by up to
+   this much. Anything the user typed arrives on the socket instead, which is
+   waited on properly and resets the decay before the reply is generated. */
 const int PIPE_POLL_MS = 4;
+const int PIPE_IDLE_MAX_MS = 50;
+/* Roughly 200ms of silence at the fast rate before backing off at all. */
+const int PIPE_IDLE_GRACE = 50;
 
 struct SocketEntry
 {
@@ -99,6 +114,10 @@ struct HandleEntry
 
 struct Select::Win32Impl
 {
+  /* How many consecutive polls have found every pipe empty. Drives the decay
+     of the poll interval; see PIPE_POLL_MS. */
+  int pipe_idle_polls = 0;
+
   std::vector<SocketEntry> sockets;
   std::vector<HandleEntry> handles;
   /* Set by the console control handler so a wait in progress returns at once
@@ -301,8 +320,17 @@ int Select::select( int timeout )
   }
 
   DWORD wait_ms = ( timeout < 0 ) ? INFINITE : static_cast<DWORD>( timeout );
-  if ( have_pipe && ( wait_ms == INFINITE || wait_ms > (DWORD)PIPE_POLL_MS ) ) {
-    wait_ms = PIPE_POLL_MS;
+  if ( have_pipe ) {
+    int cap = PIPE_POLL_MS;
+    for ( int idle = impl->pipe_idle_polls; idle > PIPE_IDLE_GRACE && cap < PIPE_IDLE_MAX_MS; idle /= 2 ) {
+      cap *= 2;
+    }
+    if ( cap > PIPE_IDLE_MAX_MS ) {
+      cap = PIPE_IDLE_MAX_MS;
+    }
+    if ( wait_ms == INFINITE || wait_ms > (DWORD)cap ) {
+      wait_ms = cap;
+    }
   }
   if ( waitset.size() > MAXIMUM_WAIT_OBJECTS ) {
     fprintf( stderr, "select: too many objects to wait on (%zu)\n", waitset.size() );
@@ -348,12 +376,14 @@ int Select::select( int timeout )
     }
   }
 
+  bool any_pipe_had_data = false;
   for ( size_t i = 0; i < impl->handles.size(); i++ ) {
     HandleEntry& h = impl->handles[i];
     if ( h.is_pipe ) {
       DWORD avail = 0;
       if ( PeekNamedPipe( h.handle, NULL, 0, NULL, &avail, NULL ) ) {
         if ( avail > 0 ) {
+          any_pipe_had_data = true;
           h.ready = true;
           ready++;
         }
@@ -374,6 +404,17 @@ int Select::select( int timeout )
   }
 
   freeze_timestamp();
+
+  if ( have_pipe ) {
+    /* Advance or reset the decay. Any byte on any pipe means the session is
+       active again, so go straight back to the fast cap; the counter is only
+       allowed to grow while every poll comes back empty. */
+    if ( any_pipe_had_data ) {
+      impl->pipe_idle_polls = 0;
+    } else if ( impl->pipe_idle_polls < ( 1 << 20 ) ) {
+      impl->pipe_idle_polls++;
+    }
+  }
 
   return ready;
 }
