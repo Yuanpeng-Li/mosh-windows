@@ -241,24 +241,76 @@ resizes the terminal without one.
 
 ---
 
-`ssh -tt` plus a remote command runs nothing
---------------------------------------------
+A pseudoconsole is a screen, not a pipe, and it breaks the handshake
+--------------------------------------------------------------------
 
-Windows OpenSSH, asked for both a pty and a command, starts a pseudoconsole and
-never runs the command. Measured with a command that could hardly be simpler:
+This is why a stock `mosh` from a Linux or macOS package manager cannot reach a
+Windows `mosh-server`, and it is not fixable from the server.
+
+`scripts/mosh.pl` runs `ssh -n -tt` and then looks for one line:
+
+```perl
+m{^MOSH CONNECT (\d+?) ([A-Za-z0-9/+]{22})\s*$}
+```
+
+Anchored at the start of a line. Asking for a pty makes Windows sshd run the
+command under a ConPTY, and a ConPTY does not forward bytes -- it paints a
+screen and emits the escape sequences that redraw it. There are two measured
+outcomes, and which one you get depends on the client.
+
+**With `-tt` alone the command runs and its output comes back polluted.**
+Captured with the ssh client itself inside a pty, which is what a real terminal
+gives it:
 
 ```
-$ ssh -tt lyp@windows-box -- "Write-Output 'probe-ok'"
-^[[?9001h^[[?1004h^[[?25l^[[?9001l^[[?1004l^[[2J^[[m^[[H^[]0;C:\WINDOWS\system32\conhost.exe^G^[[?25h
-Connection to windows-box closed.
+\e[H\e]0;C:\WINDOWS\system32\conhost.exe\a\e[?25hMOSH CONNECT 60001 <key>
 ```
 
-No `probe-ok`, no error, exit status 0. The same command without `-tt` works.
+One line, beginning with an escape. The regex cannot match it. mosh.pl then
+echoes the unmatched line back as part of the server's output -- and on a
+terminal those escapes are invisible, so the user sees a clean-looking
+`MOSH CONNECT` line and is told the startup message was not found. That
+contradiction is the whole reason this took so long to diagnose.
 
-mosh's launcher passes `-tt` by default, so this is exactly why a stock `mosh`
-finds no `MOSH CONNECT` line from a Windows server. `scripts/mosh.pl` here
-retries once without the pty when the first attempt yields nothing; upstream
-users need `--no-ssh-pty`.
+**With `-n -tt`, which is what mosh actually passes, the command does not run
+at all.** Verified by having the remote command write a file: with `-tt` the
+file appears and reports the pseudoconsole size (143x37, the client's real
+terminal); with `-n -tt` there is no file. The mechanism is not established --
+`-n` makes the session channel's input reach EOF immediately, and the plausible
+reading is that sshd tears the pseudoconsole down before it renders, but that
+is an inference from the symptom, not a trace.
+
+Measurements without a client-side pty are misleading here and earlier drafts
+of this file got it wrong: `ssh` builds the pty request from its own terminal,
+so from a pipe the far side gets something no real user would produce. Every
+capture above went through `pty.fork()`.
+
+### What was tried, and why none of it works
+
+- **Reformatting what mosh-server prints.** A blank row before the handshake
+  does move it to the start of a line, and a single `WriteFile` -- not
+  `printf`, which the CRT flushes per line into separate render frames -- makes
+  8/8 runs begin at column 0. But the line still ends `...<key>\e[4;1H`,
+  because the renderer moves the cursor rather than emitting a newline, and the
+  regex tolerates trailing whitespace and nothing else. A non-empty guard row
+  below is never painted: the process exits first. Every fix moves the escape
+  somewhere else. A screen renderer cannot be made to guarantee a line's byte
+  framing.
+- **Upstream's own bodge**, `puts("\r\n")` when `isatty(STDIN_FILENO)`, ported
+  verbatim. It is a single write of `\r\n\n`, which the renderer collapses into
+  `\e[3;1H`. It does not help.
+- **`PermitTTY no` in sshd_config.** Verified against a throwaway sshd: with
+  `-tt` the client aborts with "PTY allocation request failed on channel 0" and
+  the command never runs. Only a single `-t` falls back, and mosh passes `-tt`.
+- **`RequestTTY no` in the client's ssh_config.** A command-line `-tt` wins.
+- **`ForceCommand`.** Win32-OpenSSH enforces it only for non-pty sessions.
+- **A `mosh-server` shim on PATH.** Whatever it runs is still inside the same
+  ConPTY; there is no second channel to the launcher.
+
+So the fix has to be in the launcher, which is a Perl script and nothing else.
+`scripts/mosh.pl` here retries once without the pty; `scripts/install-launcher.sh`
+installs that launcher on a Linux or macOS client in one command, leaving the
+packaged `mosh-client` binary alone. A stock launcher needs `--no-ssh-pty`.
 
 ---
 

@@ -1,4 +1,4 @@
-EXTRA_DIST = wrap-compiler-for-flag-check mosh.pl CMakeLists.txt
+EXTRA_DIST = wrap-compiler-for-flag-check mosh.pl CMakeLists.txt install-launcher.sh
 if BUILD_CLIENT
   bin_SCRIPTS = mosh
 endif

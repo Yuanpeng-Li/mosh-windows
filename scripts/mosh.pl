@@ -455,12 +455,24 @@ if ( $pid == 0 ) { # child
   }
 
   if ( not defined $key or not defined $port ) {
-    # Windows OpenSSH runs nothing at all when a pty and a remote command are
-    # both requested -- not the command, not an error, just an empty
-    # pseudoconsole -- so a Windows server never answers the first attempt.
+    # A Windows server never answers the first attempt, because asking for a
+    # pty makes sshd run the command under a pseudoconsole -- and a ConPTY
+    # paints a screen rather than forwarding bytes. Two measured outcomes,
+    # depending on the client (see docs/windows-port-notes.md):
+    #
+    #   ssh -tt     the command runs and its output comes back, but glued to
+    #               the escape sequences the renderer emits, so the anchored
+    #               match above never fires
+    #   ssh -n -tt  the command does not run at all
+    #
     # Retry once without the pty rather than making every Windows user find
     # --no-ssh-pty for themselves. Re-running from the top avoids having to
     # unpick the state the failed attempt left behind.
+    #
+    # Two costs, both real. On a server that did run the command, the first
+    # attempt has already started a mosh-server that no client will reach; it
+    # exits by itself after 60 seconds without one. And ssh authenticates
+    # twice, which with a password or MFA means being asked twice.
     if ( $ssh_pty and not $ENV{ 'MOSH_NO_PTY_RETRY' } ) {
       $ENV{ 'MOSH_NO_PTY_RETRY' } = 1;
       exec { $0 } ( $0, '--no-ssh-pty', @original_argv );

@@ -167,18 +167,35 @@ mosh lyp@192.168.1.10 -- cmd.exe
 The session survives the ssh connection closing, sleep, and changing networks,
 which is the entire point.
 
-### If your client is old mosh
+### Your Linux or macOS client needs one thing
 
-Nothing to do — the protocol is unchanged and stock mosh 1.4.0 connects fine.
-One thing is handled for you: Windows OpenSSH runs *nothing at all* when a
-remote command and a pty are both requested, so mosh's usual `ssh -tt` yields
-an empty pseudoconsole and no `MOSH CONNECT` line. The launcher in this fork
-notices and retries without the pty. A stock `mosh` from your distribution does
-not, so pass `--no-ssh-pty`:
+The protocol is unchanged, so a stock `mosh-client` works. The **launcher** does
+not, and it is the one piece you have to update.
+
+Stock `mosh` runs `ssh -n -tt`, and asking for a pty makes Windows sshd run the
+command under a pseudoconsole. A ConPTY paints a screen instead of forwarding
+bytes, so the `MOSH CONNECT` line either arrives glued to escape sequences —
+where mosh's start-of-line match cannot see it — or the command does not run at
+all. Neither is fixable from the Windows side; `docs/windows-port-notes.md`
+records what was tried.
+
+The launcher is a Perl script, so replacing it costs one command and leaves
+your packaged `mosh-client` alone:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Yuanpeng-Li/mosh-windows/windows/scripts/install-launcher.sh | sh
+```
+
+Then `mosh user@windows-box` works with no flags. `rm $(command -v mosh)` undoes
+it. Without it, pass `--no-ssh-pty` every time:
 
 ```sh
 mosh --no-ssh-pty lyp@192.168.1.10
 ```
+
+The symptom to recognise, if you skip this: mosh prints a perfectly clean
+`MOSH CONNECT 60001 …` line and then says it did not find the server startup
+message. The escapes wrapping that line are invisible on a terminal.
 
 ---
 
