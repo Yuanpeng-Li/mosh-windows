@@ -230,22 +230,24 @@ endif()
 
 # ------------------------------------------------------------- config.h -----
 
-# The feature-test macros the POSIX sources are compiled with, in one place so
-# the probes in MoshChecks and the targets that use them cannot disagree about
-# which declarations exist.
+# The feature-test macros the POSIX sources are compiled with: none.
 #
-# _DARWIN_C_SOURCE is not optional on Apple. _XOPEN_SOURCE=600 alone puts the
-# macOS headers in strict POSIX mode, which hides the BSD extensions -- and
-# SIGWINCH is one of them, so stmclient.cc failed to compile with "use of
-# undeclared identifier 'SIGWINCH'". It built here for months because glibc
-# treats _DEFAULT_SOURCE as re-enabling them; the first macOS compiler to see
-# it rejected it. Upstream's autotools build defines none of these, but the
-# IUTF8 probe needs them, and a probe compiled with different macros than the
-# build answers a different question.
-set(MOSH_POSIX_FEATURE_DEFS _DEFAULT_SOURCE _XOPEN_SOURCE=600)
-if(APPLE)
-  list(APPEND MOSH_POSIX_FEATURE_DEFS _DARWIN_C_SOURCE)
-endif()
+# This started as _DEFAULT_SOURCE _XOPEN_SOURCE=600, added on the assumption
+# that the IUTF8 probe needed them. It does not -- IUTF8 is visible on glibc
+# with no macros defined at all, because glibc turns on _DEFAULT_SOURCE itself
+# when nothing else is asked for. Defining _XOPEN_SOURCE is what switches that
+# off, so the define created the need for its own companion.
+#
+# On macOS it did worse than nothing. _XOPEN_SOURCE puts those headers in
+# strict POSIX mode, which hid SIGWINCH (stmclient.cc would not compile) and,
+# once _DARWIN_C_SOURCE was added to paper over that, left network-no-diff
+# failing under CMake while passing under autotools on the same runner.
+#
+# Upstream's autotools build defines none of these and works on both. Matching
+# it exactly is the whole point of this build existing alongside it. The
+# variable stays, empty, so that anything genuinely needed later has an obvious
+# single place to go -- and a reason to be justified there.
+set(MOSH_POSIX_FEATURE_DEFS "")
 
 include(MoshChecks)
 
