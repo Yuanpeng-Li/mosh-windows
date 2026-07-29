@@ -85,7 +85,17 @@ public:
      Windows. */
   static mosh_fd_t output( void );
 
-  /* What to register with Select in order to be woken by keyboard input. */
+  /* What to register with Select in order to be woken by keyboard input.
+     Ready means read_input() will not block.
+
+     On Windows this is deliberately not the console input handle. That handle
+     is signalled whenever any input record is queued -- a focus change, a
+     mouse move, a window resize -- while a read of it returns only records the
+     console translates into bytes. Waiting on it therefore reports ready and
+     then blocks, which is a hang, and the one place it is guaranteed to happen
+     is the first iteration after startup, on the focus event. What is returned
+     here is an event owned by set_raw()'s reader thread, set only when bytes
+     are actually waiting. */
   static mosh_fd_t input( void );
 
   /* Reads what the user has typed. Returns the byte count, 0 at end of input,

@@ -62,7 +62,9 @@
 #include <cstring>
 #include <vector>
 
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
 #include <winsock2.h>
 #include <windows.h>
 
@@ -170,6 +172,11 @@ void Select::add_socket( Network::socket_t s )
 void Select::add_handle( mosh_fd_t h )
 {
   HANDLE handle = static_cast<HANDLE>( h );
+  if ( handle == NULL || handle == INVALID_HANDLE_VALUE ) {
+    /* WaitForMultipleObjects fails outright on one bad handle, which would
+       turn the whole wait into a busy loop rather than a reported error. */
+    return;
+  }
   for ( size_t i = 0; i < impl->handles.size(); i++ ) {
     if ( impl->handles[i].handle == handle ) {
       return;
@@ -258,7 +265,11 @@ int Select::select( int timeout )
   for ( size_t i = 0; i < impl->handles.size(); i++ ) {
     impl->handles[i].ready = false;
   }
-  clear_got_signal();
+  /* got_signal is deliberately not cleared here. On POSIX the signals of
+     interest are blocked outside pselect(), so nothing can be lost by
+     clearing; here they are recorded by other threads -- the console control
+     handler and the window-size watcher -- at moments this code does not
+     control. They are consumed by signal() instead. */
   ResetEvent( impl->wakeup );
 
   /* Same poll rate-limiting as the POSIX side. */
@@ -296,6 +307,11 @@ int Select::select( int timeout )
   if ( waitset.size() > MAXIMUM_WAIT_OBJECTS ) {
     fprintf( stderr, "select: too many objects to wait on (%zu)\n", waitset.size() );
     waitset.resize( MAXIMUM_WAIT_OBJECTS );
+  }
+
+  if ( verbose > 1 ) {
+    fprintf( stderr, "%s: waiting on %zu sockets and %zu handles for %ld ms\n", __func__, impl->sockets.size(),
+             impl->handles.size(), wait_ms == INFINITE ? -1L : static_cast<long>( wait_ms ) );
   }
 
   WaitForMultipleObjects( static_cast<DWORD>( waitset.size() ), &waitset[0], FALSE, wait_ms );
@@ -336,6 +352,10 @@ int Select::select( int timeout )
       h.ready = true;
       ready++;
     }
+  }
+
+  if ( verbose > 1 ) {
+    fprintf( stderr, "%s: %d ready\n", __func__, ready );
   }
 
   freeze_timestamp();
