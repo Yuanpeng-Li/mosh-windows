@@ -416,32 +416,54 @@ if (-not $hasConsole) { $sshArgs += '-n' }
 
 $sshArgs += @($userhost, '--', $remoteCmd)
 
-# The redirection is done by cmd, not by PowerShell. PowerShell turns a native
-# program's stderr into error records, and mosh-server writes its banner there.
-# Letting cmd do it keeps both streams as plain file handles: stdout to a file
-# for us to parse, stderr and stdin straight through to the console.
+# Read the startup line over a pipe, not out of a file.
+#
+# The line carries the session key, and mosh.pl has never let it touch a disk:
+# it forks with open($pipe, "-|"). Collecting it through `cmd /c ... > $tmp`
+# put a base64 AES-128 key in %TEMP%, and Remove-Item unlinks rather than
+# overwrites, so it stayed recoverable afterwards. A local mosh session is
+# exactly what an attacker who can read %TEMP% would want.
+#
+# Going direct also removes cmd.exe from the picture, which was a second
+# problem: the quoting below is CommandLineToArgvW's convention -- backslash
+# before quote -- and that is what CreateProcess and ssh.exe expect, but not
+# what cmd.exe does. cmd has no backslash escape, toggles quote state on every
+# quote, and treats & | < > ^ ( as metacharacters outside quotes. A host or
+# command containing one was mis-parsed before reaching ssh.
+#
+# stdout is redirected; stdin and stderr are inherited, so ssh keeps the
+# console for password and passphrase prompts and mosh-server's banner still
+# reaches the user.
 function ConvertTo-CmdQuoted([string] $s) { '"' + ($s -replace '"', '\"') + '"' }
 
-$outFile = [System.IO.Path]::GetTempFileName()
-try {
-    if ($localhost) {
-        # No ssh at all: start the server here and read its startup line
-        # directly. Useful for checking an install without a second machine.
-        $serverPath = Find-MoshServer $server
-        $cmdLine = (@($serverPath) + $serverArgs | ForEach-Object { ConvertTo-CmdQuoted $_ }) -join ' '
-        $cmdLine += ' > ' + (ConvertTo-CmdQuoted $outFile)
-        & cmd.exe /c $cmdLine
-        $sshExit = $LASTEXITCODE
-    } else {
-        $cmdLine = (@($sshExe.Source) + $sshArgs | ForEach-Object { ConvertTo-CmdQuoted $_ }) -join ' '
-        $cmdLine += ' > ' + (ConvertTo-CmdQuoted $outFile)
-        & cmd.exe /c $cmdLine
-        $sshExit = $LASTEXITCODE
-    }
-    $lines = @(Get-Content -LiteralPath $outFile -ErrorAction SilentlyContinue)
-} finally {
-    Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue
+if ($localhost) {
+    # No ssh at all: start the server here and read its startup line directly.
+    # Useful for checking an install without a second machine.
+    $exePath = Find-MoshServer $server
+    $exeArgs = $serverArgs
+} else {
+    $exePath = $sshExe.Source
+    $exeArgs = $sshArgs
 }
+
+$psi = New-Object System.Diagnostics.ProcessStartInfo
+$psi.FileName = $exePath
+$psi.Arguments = ($exeArgs | ForEach-Object { ConvertTo-CmdQuoted $_ }) -join ' '
+$psi.UseShellExecute = $false
+$psi.RedirectStandardOutput = $true
+$psi.RedirectStandardError = $false
+$psi.RedirectStandardInput = $false
+
+$proc = New-Object System.Diagnostics.Process
+$proc.StartInfo = $psi
+[void]$proc.Start()
+# Read to end before waiting: a full pipe would block the child for ever.
+$stdout = $proc.StandardOutput.ReadToEnd()
+$proc.WaitForExit()
+$sshExit = $proc.ExitCode
+$proc.Dispose()
+
+$lines = @($stdout -split "`r?`n")
 
 # ----------------------------------------------------------------- parsing --
 

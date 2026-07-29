@@ -314,11 +314,26 @@ int Select::select( int timeout )
              impl->handles.size(), wait_ms == INFINITE ? -1L : static_cast<long>( wait_ms ) );
   }
 
-  WaitForMultipleObjects( static_cast<DWORD>( waitset.size() ), &waitset[0], FALSE, wait_ms );
+  const DWORD waited = WaitForMultipleObjects( static_cast<DWORD>( waitset.size() ), &waitset[0], FALSE, wait_ms );
 
-  /* The return value says only that something happened. Poll everything: it
-     reports one index, and trusting it starves every object that sorts after
-     the busiest one. */
+  /* Which object it names is deliberately ignored below: it reports one index,
+     and trusting it starves every object that sorts after the busiest one. So
+     everything is polled instead.
+
+     WAIT_FAILED is a different matter and must not be ignored. It returns
+     immediately rather than waiting, so the poll below finds nothing, and the
+     caller loops straight back in here -- a silent 100% of a core, for as long
+     as the condition lasts, in a program whose job is to sit idle for days.
+     Report it and fail, so it is a diagnosable error rather than a hot
+     laptop. */
+  if ( waited == WAIT_FAILED ) {
+    const DWORD err = GetLastError();
+    fprintf( stderr, "select: WaitForMultipleObjects on %zu objects failed (error %lu)\n", waitset.size(),
+             static_cast<unsigned long>( err ) );
+    errno = EINVAL;
+    return -1;
+  }
+
   int ready = 0;
 
   for ( size_t i = 0; i < impl->sockets.size(); i++ ) {

@@ -443,6 +443,13 @@ if ( $pid == 0 ) { # child
     }
   }
   close $pipe;
+  # Here, not after the waitpid below: close() on a pipe opened with "-|" reaps
+  # the child itself and sets $?, so the waitpid that follows finds nothing
+  # left to reap, returns -1, and overwrites $? with -1. Kept for the retry
+  # decision further down, where ssh having exited cleanly while producing no
+  # usable startup message is what distinguishes the pseudoconsole case from an
+  # ordinary connection failure.
+  my $ssh_exit = $?;
   waitpid $pid, 0;
 
   if ( not defined $ip ) {
@@ -473,7 +480,19 @@ if ( $pid == 0 ) { # child
     # attempt has already started a mosh-server that no client will reach; it
     # exits by itself after 60 seconds without one. And ssh authenticates
     # twice, which with a password or MFA means being asked twice.
-    if ( $ssh_pty and not $ENV{ 'MOSH_NO_PTY_RETRY' } ) {
+    # Only when the evidence points at the pty, not on every failure. A wrong
+    # hostname, a refused key, a firewall, or mosh genuinely not being
+    # installed are all "no startup message" too, and retrying those costs a
+    # second full ssh connection and a second authentication -- which for
+    # anyone using a one-time code means burning a second code to reach the
+    # same error. The signature of the ConPTY case is that ssh itself
+    # succeeded (it ran, connected and exited cleanly) and yet produced either
+    # nothing or output carrying terminal escape sequences.
+    my $ssh_looked_fine = ( defined $ssh_exit and $ssh_exit == 0 );
+    my $saw_escapes = grep { /\e/ } @deferred_output;
+    my $looks_like_pty_problem = $ssh_looked_fine && ( $saw_escapes || !@deferred_output );
+
+    if ( $ssh_pty and $looks_like_pty_problem and not $ENV{ 'MOSH_NO_PTY_RETRY' } ) {
       # Say so. A second authentication prompt out of nowhere is worse than
       # the failure it is recovering from, and the first attempt's output is
       # the only evidence of why this is happening -- so carry it across

@@ -111,6 +111,21 @@ grep -q 'MOSH_NO_PTY_RETRY' "$tmp" \
 
 step "Installing to $TARGET"
 mkdir -p "$DIR"
+
+# Remove first, always. On an Intel Mac /usr/local/bin/mosh is a Homebrew
+# symlink into the Cellar, and cp follows it -- so copying "to /usr/local/bin"
+# silently rewrites the file inside the formula, and the documented undo
+# (rm $(command -v mosh)) then deletes the link and leaves the formula broken.
+# Removing the link and creating a plain file leaves brew's own copy intact and
+# recoverable with `brew link --overwrite mosh`.
+if [ -L "$TARGET" ] || [ -e "$TARGET" ]; then
+    if [ -w "$DIR" ]; then
+        rm -f "$TARGET"
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo rm -f "$TARGET"
+    fi
+fi
+
 if [ -w "$DIR" ]; then
     cp "$tmp" "$TARGET" && chmod 755 "$TARGET"
 elif command -v sudo >/dev/null 2>&1; then

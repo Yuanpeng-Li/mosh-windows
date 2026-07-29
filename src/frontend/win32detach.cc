@@ -106,7 +106,27 @@ namespace Win32Detach {
 
 bool is_detached( void )
 {
-  return GetEnvironmentVariableW( DAEMON_ENV, NULL, 0 ) != 0;
+  /* Read once, then clear, then answer from the cache.
+
+     Clearing matters: the daemon inherited this from the process that spawned
+     it, and everything the daemon starts -- the shell, and whatever the user
+     runs in it -- inherits the daemon's environment in turn, because
+     ptyhost_win32 passes lpEnvironment = NULL. Left set, a mosh-server started
+     from inside a mosh session sees it, believes it is already the detached
+     copy, skips spawn(), and dies with its parent: `mosh --local` from inside
+     a session, or mosh from A to B to C, failing with no diagnostic.
+
+     Caching matters because clearing makes the raw query answer differently
+     the second time. There is one caller today; this keeps a second one from
+     being a trap that spawns a second daemon. */
+  static int cached = -1;
+  if ( cached < 0 ) {
+    cached = ( GetEnvironmentVariableW( DAEMON_ENV, NULL, 0 ) != 0 ) ? 1 : 0;
+    if ( cached ) {
+      SetEnvironmentVariableW( DAEMON_ENV, NULL );
+    }
+  }
+  return cached != 0;
 }
 
 int spawn( void )
