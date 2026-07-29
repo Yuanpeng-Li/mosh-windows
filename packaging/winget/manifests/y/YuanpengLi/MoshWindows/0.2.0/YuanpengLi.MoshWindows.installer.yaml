@@ -22,11 +22,11 @@ Commands:
   - mosh-server
 ReleaseDate: 2026-07-28
 Installers:
-  # The archive now carries compiled binaries, so it is per-architecture. The
-  # hashes are placeholders until the release is built; packaging/winget/README.md
-  # says how to fill them in.
+  # The archive carries compiled binaries, so it is per-architecture. Only x64
+  # is built today; packaging/winget/README.md says how to regenerate the hash
+  # when a release is cut.
   - Architecture: x64
     InstallerUrl: https://github.com/Yuanpeng-Li/mosh-windows/releases/download/v0.2.0/mosh-windows-x64-v0.2.0.zip
-    InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
+    InstallerSha256: 2BEFE228BCD7408364474A5C97017F15B82AD2782BE52CDBB53B121657620396
 ManifestType: installer
 ManifestVersion: 1.6.0
