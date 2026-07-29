@@ -474,9 +474,21 @@ if ( $pid == 0 ) { # child
     # exits by itself after 60 seconds without one. And ssh authenticates
     # twice, which with a password or MFA means being asked twice.
     if ( $ssh_pty and not $ENV{ 'MOSH_NO_PTY_RETRY' } ) {
+      # Say so. A second authentication prompt out of nowhere is worse than
+      # the failure it is recovering from, and the first attempt's output is
+      # the only evidence of why this is happening -- so carry it across
+      # rather than discarding it, in case the retry fails too.
+      warn "$0: no startup message; the server may not allow a pty for a remote\n"
+        . "$0: command. Retrying once with --no-ssh-pty (ssh will authenticate again).\n";
       $ENV{ 'MOSH_NO_PTY_RETRY' } = 1;
+      $ENV{ 'MOSH_PTY_ATTEMPT_OUTPUT' } = join( "\n", @deferred_output );
       exec { $0 } ( $0, '--no-ssh-pty', @original_argv );
       die "$0: Cannot re-exec $0: $!\n";
+    }
+    if ( defined $ENV{ 'MOSH_PTY_ATTEMPT_OUTPUT' }
+         and length $ENV{ 'MOSH_PTY_ATTEMPT_OUTPUT' } ) {
+      warn "$0: the first attempt, with a pty, said:\n";
+      warn "$0:   $_\n" for split( /\n/, $ENV{ 'MOSH_PTY_ATTEMPT_OUTPUT' } );
     }
     print "$_\n" for @deferred_output;
     if ( $bad_udp_port_warning ) {

@@ -23,15 +23,31 @@ interoperates with stock mosh 1.4.0 in both directions.
 Install
 -------
 
+### Download it, read it, run it
+
+```powershell
+irm https://raw.githubusercontent.com/Yuanpeng-Li/mosh-windows/windows/scripts/install.ps1 -OutFile install.ps1
+notepad install.ps1        # it is 180 lines; the interesting part is what it downloads
+.\install.ps1
+```
+
+Installs `mosh.exe`, `mosh.ps1`, `mosh.cmd`, `mosh-client.exe` and
+`mosh-server.exe` into `%LOCALAPPDATA%\Programs\mosh` and adds that one
+directory to your **user** PATH. No admin, nothing written anywhere else.
+
 ### One line
 
 ```powershell
 irm https://raw.githubusercontent.com/Yuanpeng-Li/mosh-windows/windows/scripts/install.ps1 | iex
 ```
 
-Installs `mosh.exe`, `mosh.ps1`, `mosh.cmd`, `mosh-client.exe` and
-`mosh-server.exe` into `%LOCALAPPDATA%\Programs\mosh` and adds that one
-directory to your **user** PATH. No admin, nothing written anywhere else.
+Same thing, in one go. Worth knowing before you use it: fetching a script and
+piping it straight into `iex` is also how a good deal of malware arrives, and
+Defender's behavioural engine scores it accordingly — running it wrapped in
+`powershell -EncodedCommand`, as an automation harness might, was enough to
+raise `Trojan:Win32/Commando.A!ml` on the machine this port was developed on.
+Nothing was detected in any file; the command line alone did it. The three-step
+form above avoids that, and lets you read what you are about to run.
 
 Then open a **new** terminal:
 
