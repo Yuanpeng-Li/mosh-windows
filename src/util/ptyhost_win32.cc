@@ -360,6 +360,28 @@ void PtyHost::release( void )
 void PtyHost::close( void )
 {
   if ( impl->pty ) {
+    /* Drain whatever the pseudoconsole still has queued before closing it.
+       ClosePseudoConsole flushes, and a flush with a full output pipe and
+       nobody reading it blocks -- that is the documented way this call hangs.
+       We are the only reader, and by this point the loop has stopped reading,
+       so the precondition is ours to remove.
+
+       Bounded twice over: only what PeekNamedPipe says is already there, and
+       at most a fixed number of rounds. This is teardown; it must finish. */
+    for ( int round = 0; round < 64; round++ ) {
+      DWORD avail = 0;
+      if ( impl->from_child == INVALID_HANDLE_VALUE
+           || !PeekNamedPipe( impl->from_child, NULL, 0, NULL, &avail, NULL ) || avail == 0 ) {
+        break;
+      }
+      char scratch[4096];
+      DWORD want = avail < sizeof scratch ? avail : (DWORD)sizeof scratch;
+      DWORD got = 0;
+      if ( !ReadFile( impl->from_child, scratch, want, &got, NULL ) || got == 0 ) {
+        break;
+      }
+    }
+
     /* Closes the pty and, with it, the child's console. This is what makes
        the shell see end of input and exit. */
     ClosePseudoConsole( impl->pty );

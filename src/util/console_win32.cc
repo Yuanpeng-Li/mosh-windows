@@ -217,8 +217,14 @@ Console::~Console()
   if ( impl->stop_event ) {
     SetEvent( impl->stop_event );
   }
+  /* Both threads have to be accounted for, not just the reader. The watcher
+     samples the console every RESIZE_POLL_MS and reads impl the whole time; if
+     it has not come out, freeing impl is a use-after-free just as surely.
+     The result was previously discarded here, so the leak-rather-than-free
+     decision below was made on half the evidence. */
+  bool watcher_stopped = true;
   if ( impl->watcher ) {
-    WaitForSingleObject( impl->watcher, 1000 );
+    watcher_stopped = ( WaitForSingleObject( impl->watcher, 1000 ) == WAIT_OBJECT_0 );
     CloseHandle( impl->watcher );
     impl->watcher = NULL;
   }
@@ -236,7 +242,7 @@ Console::~Console()
   }
 
   g_impl = NULL;
-  if ( reader_stopped ) {
+  if ( reader_stopped && watcher_stopped ) {
     delete impl;
   }
 }
