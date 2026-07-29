@@ -61,6 +61,7 @@
 #endif
 #include <windows.h>
 
+#include "src/util/fatal_assert.h"
 #include "src/util/select.h"
 
 #ifndef PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE
@@ -230,12 +231,23 @@ bool PtyHost::start( const std::vector<std::string>& args, int width, int height
   std::vector<wchar_t> mutable_cmdline( cmdline.begin(), cmdline.end() );
   mutable_cmdline.push_back( L'\0' );
 
+  /* The guard the header comment says is here. It was not: the comment above
+     promises that adding CREATE_NO_WINDOW to "hide the window" will fail
+     loudly, and nothing enforced it, so the failure would instead have been a
+     session that starts and shows nothing -- the child attached to a different
+     console, the pseudoconsole receiving no output at all.
+
+     Named separately so the assertion has something to test, and so the next
+     person to add a flag has to walk past this. */
+  const DWORD creation_flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT;
+  fatal_assert( 0 == ( creation_flags & ( CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_CONSOLE ) ) );
+
   const BOOL ok = CreateProcessW( NULL,
                                   &mutable_cmdline[0],
                                   NULL,
                                   NULL,
                                   FALSE,
-                                  EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+                                  creation_flags,
                                   NULL,
                                   NULL,
                                   &si.StartupInfo,

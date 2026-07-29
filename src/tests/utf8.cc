@@ -161,6 +161,10 @@ static void test_known_bad( void )
 
 /* ------------------------------------------------------ vs the C library -- */
 
+/* Set by test_against_libc before any comparison runs; see
+   libc_accepts_extended_forms below for what it means. */
+static bool libc_extended = true;
+
 static bool utf8_locale( void )
 {
   if ( !setlocale( LC_ALL, "C.UTF-8" ) && !setlocale( LC_ALL, "en_US.UTF-8" ) && !setlocale( LC_ALL, "" ) ) {
@@ -172,6 +176,13 @@ static bool utf8_locale( void )
 
 static void compare_with_libc( const char* bytes, size_t n )
 {
+  /* 0xF8..0xFD introduce the five- and six-byte forms. A library that rejects
+     them calls such a sequence invalid where we call it incomplete, which is a
+     disagreement about a dialect rather than about UTF-8. */
+  if ( !libc_extended && n > 0 && (unsigned char)bytes[0] >= 0xF8 ) {
+    return;
+  }
+
   char32_t mine = 0;
   size_t mine_ret = Util::utf8_decode( &mine, bytes, n );
 
@@ -205,8 +216,32 @@ static void compare_with_libc( const char* bytes, size_t n )
   }
 }
 
+/* Does this C library accept the obsolete five- and six-byte forms?
+ *
+ * glibc does, and this codec deliberately matches it (see UTF8_MAX_CODE_POINT
+ * in utf8.h): a client and server that disagree about how many U+FFFDs a
+ * malformed sequence produces desynchronise the screen. Apple's libc does not
+ * -- it implements strict Unicode, stopping at U+10FFFF -- so requiring
+ * agreement above that range is requiring the impossible, and made this test
+ * fail on macOS while passing everywhere it had been run.
+ *
+ * Probe rather than #ifdef __GLIBC__: what matters is the behaviour in front
+ * of us, not the vendor's name. */
+static bool libc_accepts_extended_forms( void )
+{
+  /* U+200000 as a five-byte form: F8 88 80 80 80. */
+  static const char five[] = "\xF8\x88\x80\x80\x80";
+  wchar_t wc = 0;
+  mbstate_t ps = mbstate_t();
+  return mbrtowc( &wc, five, sizeof five - 1, &ps ) == 5;
+}
+
 static void test_against_libc( void )
 {
+  libc_extended = libc_accepts_extended_forms();
+  const bool extended = libc_extended;
+  printf( "utf8: this C library %s the obsolete 5- and 6-byte forms\n",
+          extended ? "accepts" : "rejects" );
   /* Every one-byte and two-byte sequence: 65792 cases, which between them
      cover bare continuations, both overlong forms' lead bytes, and the
      surrogate and out-of-range lead/second-byte pairs. */
@@ -220,9 +255,14 @@ static void test_against_libc( void )
     }
   }
 
-  /* Every scalar value's canonical encoding. */
+  /* Every scalar value's canonical encoding. Above U+10FFFF only where the
+     library claims to speak the same dialect; elsewhere the comparison would
+     be against a library that has decided, correctly by the modern standard,
+     that those code points do not exist. Our own behaviour up there is still
+     covered -- by test_roundtrip, which does not consult libc at all. */
+  const char32_t compare_limit = extended ? Util::UTF8_MAX_CODE_POINT : 0x10FFFF;
   for ( char32_t wc = 0;; wc += ( wc < 0x110000 ? 1 : 0x3FF ) ) {
-    if ( wc > Util::UTF8_MAX_CODE_POINT ) {
+    if ( wc > compare_limit ) {
       break;
     }
     if ( wc >= 0xD800 && wc <= 0xDFFF ) {

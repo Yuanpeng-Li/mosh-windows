@@ -303,6 +303,38 @@ if(MSVC)
   # of /std, which makes every C++ version probe (and any such check in the
   # sources) give the wrong answer.
   target_compile_options(mosh_common INTERFACE /W3 /utf-8 /permissive- /Zc:__cplusplus)
+
+  # MOSH_HARDEN defaults to ON, and every use of it was in the else() branch
+  # below -- so on MSVC the option was on and did nothing at all, which is
+  # worse than being off: the summary said hardening was enabled. mosh-server
+  # is a network-facing process that outlives its login session, so it is
+  # exactly the binary that should carry these.
+  #
+  # Probed rather than hardcoded, for the same reason configure.ac probes its
+  # flags: /Qspectre needs a library MSVC only ships with the "Spectre
+  # mitigated libs" component installed, and a build that fails because the
+  # hardening flag is unavailable helps nobody.
+  if(MOSH_HARDEN)
+    include(CheckCXXCompilerFlag)
+    set(_mosh_msvc_harden "")
+    foreach(_f /guard:cf /Qspectre /sdl)
+      string(MAKE_C_IDENTIFIER "MOSH_MSVC${_f}" _cache)
+      check_cxx_compiler_flag(${_f} ${_cache})
+      if(${_cache})
+        list(APPEND _mosh_msvc_harden ${_f})
+      endif()
+    endforeach()
+    if(_mosh_msvc_harden)
+      target_compile_options(mosh_common INTERFACE ${_mosh_msvc_harden})
+    endif()
+    # /guard:cf has to reach the link as well or the compiler's instrumentation
+    # has no dispatch table to check against. DYNAMICBASE, NXCOMPAT and
+    # HIGHENTROPYVA are already the x64 defaults; naming them means a future
+    # linker flag cannot quietly turn one off.
+    target_link_options(mosh_common INTERFACE
+      /DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA
+      $<$<BOOL:${MOSH_MSVC_guard_cf}>:/guard:cf>)
+  endif()
 else()
   include(CheckCXXCompilerFlag)
   include(CheckLinkerFlag OPTIONAL RESULT_VARIABLE _have_check_linker_flag)
