@@ -87,6 +87,8 @@ my $help = undef;
 my $version = undef;
 
 my @cmdline = @ARGV;
+# Kept whole so the no-pty retry below can start over with the same request.
+my @original_argv = @ARGV;
 
 my $usage =
 qq{Usage: $0 [options] [--] [user@]host [command...]
@@ -412,6 +414,7 @@ if ( $pid == 0 ) { # child
 } else { # parent
   my ( $sship, $port, $key );
   my $bad_udp_port_warning = 0;
+  my @deferred_output;
   LINE: while ( <$pipe> ) {
     chomp;
     if ( m{^MOSH IP } ) {
@@ -436,7 +439,7 @@ if ( $pid == 0 ) { # child
       if ( defined $port_request and $port_request =~ m{:} and m{Bad UDP port} ) {
 	$bad_udp_port_warning = 1;
       }
-      print "$_\n";
+      push @deferred_output, $_;
     }
   }
   close $pipe;
@@ -452,11 +455,24 @@ if ( $pid == 0 ) { # child
   }
 
   if ( not defined $key or not defined $port ) {
+    # Windows OpenSSH runs nothing at all when a pty and a remote command are
+    # both requested -- not the command, not an error, just an empty
+    # pseudoconsole -- so a Windows server never answers the first attempt.
+    # Retry once without the pty rather than making every Windows user find
+    # --no-ssh-pty for themselves. Re-running from the top avoids having to
+    # unpick the state the failed attempt left behind.
+    if ( $ssh_pty and not $ENV{ 'MOSH_NO_PTY_RETRY' } ) {
+      $ENV{ 'MOSH_NO_PTY_RETRY' } = 1;
+      exec { $0 } ( $0, '--no-ssh-pty', @original_argv );
+      die "$0: Cannot re-exec $0: $!\n";
+    }
+    print "$_\n" for @deferred_output;
     if ( $bad_udp_port_warning ) {
       die "$0: Server does not support UDP port range option.\n";
     }
     die "$0: Did not find mosh server startup message. (Have you installed mosh on your server?)\n";
   }
+  print "$_\n" for @deferred_output;
 
   # Now start real mosh client
   $ENV{ 'MOSH_KEY' } = $key;

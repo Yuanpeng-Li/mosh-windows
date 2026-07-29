@@ -296,11 +296,28 @@ OpenSSH runs through cmd.exe with different quoting rules. Use the default
 }
 if ($useRemoteIp -notin @('local', 'remote')) { Die-Usage "Unknown parameter $useRemoteIp" }
 
-if ($localhost) {
-    Die "--local needs a native mosh-server, which this tree does not build yet."
-}
 
-# --------------------------------------------------------------- the client --
+
+# ------------------------------------------------------- the local binaries --
+
+# Only used by --local. Everywhere else the server is a name resolved on the
+# far end, not a path here.
+function Find-MoshServer([string] $want) {
+    if ($want -ne 'mosh-server') {
+        if (Test-Path -LiteralPath $want) { return (Resolve-Path -LiteralPath $want).Path }
+        $c = Get-Command $want -ErrorAction SilentlyContinue
+        if ($c) { return $c.Source }
+        Die "Cannot find mosh-server at: $want"
+    }
+    $here = Split-Path -Parent $PSCommandPath
+    foreach ($n in 'mosh-server.exe', 'mosh-server') {
+        $p = Join-Path $here $n
+        if (Test-Path -LiteralPath $p) { return (Resolve-Path -LiteralPath $p).Path }
+    }
+    $c = Get-Command mosh-server -ErrorAction SilentlyContinue
+    if ($c) { return $c.Source }
+    Die "Cannot find mosh-server. Point --server at it, or put it on PATH."
+}
 
 function Find-MoshClient([string] $want) {
     if ($want -ne 'mosh-client') {
@@ -332,8 +349,11 @@ at your own, or set MOSH_CLIENT.
 }
 $clientPath = Find-MoshClient $client
 
-$sshExe = Get-Command $sshWords[0] -ErrorAction SilentlyContinue
-if (-not $sshExe) { Die "Cannot find ssh: $($sshWords[0])" }
+$sshExe = $null
+if (-not $localhost) {
+    $sshExe = Get-Command $sshWords[0] -ErrorAction SilentlyContinue
+    if (-not $sshExe) { Die "Cannot find ssh: $($sshWords[0])" }
+}
 
 # --------------------------------------------------- build the remote command --
 
@@ -347,7 +367,11 @@ if (-not $locale) {
 
 $serverArgs = @('new')
 $serverArgs += @('-c', '256')
-if (-not $bindIp -or $bindIp -match '^ssh$') { $serverArgs += '-s' }
+if ($localhost -and (-not $bindIp -or $bindIp -match '^ssh$')) {
+    # There is no ssh, so there is no $SSH_CONNECTION for -s to read.
+    $serverArgs += @('-i', '127.0.0.1')
+}
+elseif (-not $bindIp -or $bindIp -match '^ssh$') { $serverArgs += '-s' }
 elseif ($bindIp -match '^any$') { }
 else { $serverArgs += @('-i', $bindIp) }
 if ($portRequest) { $serverArgs += @('-p', $portRequest) }
@@ -364,7 +388,7 @@ function ConvertTo-ShQuoted([string[]] $words) {
 
 $remoteCmd = "$server " + (ConvertTo-ShQuoted $serverArgs)
 
-if ($useRemoteIp -eq 'remote') {
+if ($useRemoteIp -eq 'remote' -and -not $localhost) {
     # Ask the remote end which address ssh actually reached it on, and connect
     # the UDP session to that. Handing the client whatever the user typed
     # breaks for an ssh_config alias, which is not a name DNS can resolve, and
@@ -400,10 +424,20 @@ function ConvertTo-CmdQuoted([string] $s) { '"' + ($s -replace '"', '\"') + '"' 
 
 $outFile = [System.IO.Path]::GetTempFileName()
 try {
-    $cmdLine = (@($sshExe.Source) + $sshArgs | ForEach-Object { ConvertTo-CmdQuoted $_ }) -join ' '
-    $cmdLine += ' > ' + (ConvertTo-CmdQuoted $outFile)
-    & cmd.exe /c $cmdLine
-    $sshExit = $LASTEXITCODE
+    if ($localhost) {
+        # No ssh at all: start the server here and read its startup line
+        # directly. Useful for checking an install without a second machine.
+        $serverPath = Find-MoshServer $server
+        $cmdLine = (@($serverPath) + $serverArgs | ForEach-Object { ConvertTo-CmdQuoted $_ }) -join ' '
+        $cmdLine += ' > ' + (ConvertTo-CmdQuoted $outFile)
+        & cmd.exe /c $cmdLine
+        $sshExit = $LASTEXITCODE
+    } else {
+        $cmdLine = (@($sshExe.Source) + $sshArgs | ForEach-Object { ConvertTo-CmdQuoted $_ }) -join ' '
+        $cmdLine += ' > ' + (ConvertTo-CmdQuoted $outFile)
+        & cmd.exe /c $cmdLine
+        $sshExit = $LASTEXITCODE
+    }
     $lines = @(Get-Content -LiteralPath $outFile -ErrorAction SilentlyContinue)
 } finally {
     Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue
@@ -412,6 +446,7 @@ try {
 # ----------------------------------------------------------------- parsing --
 
 $ip = $null; $port = $null; $key = $null
+if ($localhost) { $ip = '127.0.0.1' }
 foreach ($line in $lines) {
     $l = ([string]$line).TrimEnd()
     if ($l -match '^MOSH IP (\S+)\s*$') { $ip = $Matches[1]; continue }

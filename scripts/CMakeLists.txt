@@ -1,9 +1,30 @@
 # The `mosh` launcher. This is the command users actually run -- mosh-client
 # alone is not a usable install -- so the CMake build has to produce it too.
 #
-# It is Perl and drives ssh, so it is POSIX-only; the Windows port gets its own
-# launcher (see the port plan). Mirrors scripts/Makefile.am, including the
-# `perl -c` syntax check that build performs.
+# There are two of them. The original is Perl driving ssh; the Windows one is
+# PowerShell, because Perl is not present on a stock Windows and because the
+# quoting rules differ enough that one script cannot serve both. mosh.exe is a
+# small native launcher for the PowerShell one: `mosh` has to be an .exe both
+# for winget's portable installer and because PowerShell splits an argument
+# like --client=C:\path at the colon when a .ps1 is invoked with -File.
+
+if(WIN32)
+  add_executable(mosh mosh-launcher.cc)
+  target_link_libraries(mosh PRIVATE mosh_common)
+  install(TARGETS mosh RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+  # mosh.exe looks for mosh.ps1 beside itself, so the two travel together.
+  install(FILES mosh.ps1 mosh.cmd DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+  # Keep them beside the binaries in the build tree as well, so a build tree
+  # can be run from without installing.
+  add_custom_command(TARGET mosh POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/mosh.ps1" "$<TARGET_FILE_DIR:mosh>/mosh.ps1"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/mosh.cmd" "$<TARGET_FILE_DIR:mosh>/mosh.cmd"
+    VERBATIM)
+  return()
+endif()
 
 set(_mosh_script "${CMAKE_CURRENT_BINARY_DIR}/mosh")
 
