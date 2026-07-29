@@ -243,7 +243,13 @@ endif()
 # ---------------------------------------------------------------- symbols --
 if(NOT WIN32)
   # IUTF8 needs the GNU/BSD feature macros the terminal code compiles with.
-  set(CMAKE_REQUIRED_DEFINITIONS -D_DEFAULT_SOURCE -D_XOPEN_SOURCE=600)
+  # The same macros the targets are built with (see MOSH_POSIX_FEATURE_DEFS in
+  # the top-level CMakeLists). A probe compiled with a different feature-test
+  # set than the build answers a different question.
+  set(CMAKE_REQUIRED_DEFINITIONS "")
+  foreach(_d IN LISTS MOSH_POSIX_FEATURE_DEFS)
+    list(APPEND CMAKE_REQUIRED_DEFINITIONS "-D${_d}")
+  endforeach()
   check_symbol_exists(IUTF8 "termios.h" HAVE_IUTF8)
   set(CMAKE_REQUIRED_DEFINITIONS)
 

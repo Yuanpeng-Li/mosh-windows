@@ -32,6 +32,25 @@ jobs:
     - name: enable vcpkg binary caching
       run: echo "VCPKG_BINARY_SOURCES=clear;x-gha,readwrite" >> $env:GITHUB_ENV
 
+    # vcpkg.json pins builtin-baseline to a specific vcpkg commit, on purpose:
+    # without it protoc and libprotobuf can come from different checkouts and
+    # skew. The runner's preinstalled vcpkg is a shallow clone, so that commit
+    # is not in its history and the configure step dies with
+    #   fatal: path 'versions/baseline.json' exists on disk, but not in '6d9d7df...'
+    # Deepening the clone is the fix that keeps the pin.
+    - name: give vcpkg the history our baseline lives in
+      run: |
+        $vcpkg = $env:VCPKG_INSTALLATION_ROOT
+        if (Test-Path "$vcpkg\.git\shallow") {
+          git -C $vcpkg fetch --unshallow
+        } else {
+          git -C $vcpkg fetch origin
+        }
+        $base = (Get-Content vcpkg.json | ConvertFrom-Json).'builtin-baseline'
+        git -C $vcpkg cat-file -e "$base^{commit}"
+        if ($LASTEXITCODE -ne 0) { throw "vcpkg baseline $base is still not reachable" }
+        Write-Host "vcpkg has baseline $base"
+
     # The Visual Studio generator rather than Ninja, so this needs no vcvars
     # step and no third-party action to provide one. It is a multi-config
     # generator, hence --config and -C below.

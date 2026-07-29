@@ -230,6 +230,23 @@ endif()
 
 # ------------------------------------------------------------- config.h -----
 
+# The feature-test macros the POSIX sources are compiled with, in one place so
+# the probes in MoshChecks and the targets that use them cannot disagree about
+# which declarations exist.
+#
+# _DARWIN_C_SOURCE is not optional on Apple. _XOPEN_SOURCE=600 alone puts the
+# macOS headers in strict POSIX mode, which hides the BSD extensions -- and
+# SIGWINCH is one of them, so stmclient.cc failed to compile with "use of
+# undeclared identifier 'SIGWINCH'". It built here for months because glibc
+# treats _DEFAULT_SOURCE as re-enabling them; the first macOS compiler to see
+# it rejected it. Upstream's autotools build defines none of these, but the
+# IUTF8 probe needs them, and a probe compiled with different macros than the
+# build answers a different question.
+set(MOSH_POSIX_FEATURE_DEFS _DEFAULT_SOURCE _XOPEN_SOURCE=600)
+if(APPLE)
+  list(APPEND MOSH_POSIX_FEATURE_DEFS _DARWIN_C_SOURCE)
+endif()
+
 include(MoshChecks)
 
 set(PACKAGE         "mosh")

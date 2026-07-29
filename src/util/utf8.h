@@ -102,12 +102,24 @@ inline bool utf8_encodable( char32_t wc )
  */
 size_t utf8_decode( char32_t* pwc, const char* s, size_t n );
 
-/* Encode wc into out[0..4). Returns the number of bytes written, 1 to 4.
+/* Encode wc into out[0..UTF8_MAX_LEN). Returns the number of bytes written,
+ * 1 to UTF8_MAX_LEN.
+ *
+ * UTF8_MAX_LEN, not 4. Four is the answer for Unicode scalars, but this codec
+ * deliberately accepts glibc's wider range up to U+7FFFFFFF (see
+ * UTF8_MAX_CODE_POINT above), and those need the obsolete five- and six-byte
+ * forms. This declaration said char out[4] while the definition said
+ * UTF8_MAX_LEN: gcc accepts the disagreement, clang rejects it outright
+ * (-Warray-parameter), so it built on Linux and failed the first time it met a
+ * macOS compiler. Every caller in the tree already passes a UTF8_MAX_LEN
+ * buffer, so nothing was overflowing -- but the header was promising a size
+ * two bytes smaller than the code can write, which is a bad thing for a header
+ * to promise.
  *
  * Unlike wcrtomb() this cannot fail: a non-scalar argument is encoded as
  * U+FFFD rather than returning an error the caller might add to a pointer.
  */
-size_t utf8_encode( char out[4], char32_t wc );
+size_t utf8_encode( char out[UTF8_MAX_LEN], char32_t wc );
 
 /* Whole-string conversions, for text that crosses between the byte world and
    the code-point world -- mosh's own status messages, which are formatted as

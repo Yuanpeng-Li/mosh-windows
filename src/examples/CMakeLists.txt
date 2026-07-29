@@ -36,7 +36,7 @@ target_link_libraries(example-benchmark PRIVATE
 
 foreach(_t example-encrypt example-decrypt example-parse example-termemu
           example-ntester example-benchmark)
-  target_compile_definitions(${_t} PRIVATE _DEFAULT_SOURCE _XOPEN_SOURCE=600)
+  target_compile_definitions(${_t} PRIVATE ${MOSH_POSIX_FEATURE_DEFS})
   add_dependencies(${_t} mosh_version)
   if(MOSH_HARDEN AND MOSH_HARDEN_LINK_FLAGS)
     target_link_options(${_t} PRIVATE ${MOSH_HARDEN_LINK_FLAGS})

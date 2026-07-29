@@ -29,7 +29,7 @@ add_dependencies(moshterminal mosh_version)
 if(NOT WIN32)
   # configure.ac passes these with TINFO_CFLAGS; terminaldisplayinit.cc needs
   # them for the terminfo entry points.
-  target_compile_definitions(moshterminal PRIVATE _DEFAULT_SOURCE _XOPEN_SOURCE=600)
+  target_compile_definitions(moshterminal PRIVATE ${MOSH_POSIX_FEATURE_DEFS})
   target_link_libraries(moshterminal PUBLIC ${MOSH_TINFO_LIBS})
   if(MOSH_TINFO_INCLUDE_DIRS)
     target_include_directories(moshterminal PUBLIC ${MOSH_TINFO_INCLUDE_DIRS})
