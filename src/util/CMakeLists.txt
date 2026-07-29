@@ -25,15 +25,17 @@ if(WIN32)
     locale_utils_win32.cc locale_utils.h
     select_win32.cc       select.h
     console_win32.cc      console.h
+    ptyhost_win32.cc      ptyhost.h
     compat_win32.cc)
-  # pty_compat is still missing: forkpty and ioctl, which the ConPTY host
-  # replaces.
+  # No pty_compat: forkpty and the winsize ioctls have no Windows spelling at
+  # all, and ptyhost_win32 answers the same question with a pseudoconsole.
 else()
   list(APPEND _moshutil_sources
     swrite.cc       swrite.h
     locale_utils.cc locale_utils.h
     select.cc       select.h
     console_posix.cc console.h
+    ptyhost_posix.cc ptyhost.h
     pty_compat.cc   pty_compat.h)
 endif()
 
