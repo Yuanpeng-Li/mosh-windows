@@ -404,13 +404,21 @@ std::string Connection::recv_one( socket_t sock_to_recv )
   const ssize_t received_len = udp_recv( sock_to_recv, msg_payload, sizeof msg_payload, &packet_remote_addr.sa,
                                          &addrlen, &congestion_experienced, &truncated );
 
-  if ( received_len < 0 ) {
-    throw NetworkException( "recvmsg", last_socket_error() );
+  /* Truncation first, because the two platforms report it differently and the
+     specific diagnosis is the useful one either way. POSIX sets MSG_TRUNC and
+     still returns the (truncated) length, so this order changes nothing there.
+     Winsock fails the call with WSAEMSGSIZE and returns -1, so testing the
+     length first meant an oversize datagram was reported as a generic socket
+     error and *truncated was never read at all -- a flag the abstraction went
+     to the trouble of providing, dead on one of its two platforms. */
+  if ( truncated ) {
+    /* Whatever the return value: on one platform the receive succeeded and on
+       the other it did not, and neither has a socket error worth reporting. */
+    throw NetworkException( "Received oversize datagram", 0 );
   }
 
-  if ( truncated ) {
-    /* The receive itself succeeded, so there is no socket error to report. */
-    throw NetworkException( "Received oversize datagram", 0 );
+  if ( received_len < 0 ) {
+    throw NetworkException( "recvmsg", last_socket_error() );
   }
 
   Packet p( session.decrypt( msg_payload, received_len ) );

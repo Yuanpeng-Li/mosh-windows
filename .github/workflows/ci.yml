@@ -35,5 +35,9 @@ jobs:
     - name: "build"
       run: make V=1
 
+    # VERBOSE=1 makes automake print test-suite.log when a test fails. Without
+    # it the log says only "FAIL: utf8" and "See src/tests/test-suite.log",
+    # which is a file nobody can reach afterwards -- two rounds of this were
+    # spent guessing at output that was right there on the runner.
     - name: "test"
-      run: make V=1 check
+      run: make V=1 check VERBOSE=1

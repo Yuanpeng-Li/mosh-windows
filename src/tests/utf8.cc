@@ -176,10 +176,16 @@ static bool utf8_locale( void )
 
 static void compare_with_libc( const char* bytes, size_t n )
 {
-  /* 0xF8..0xFD introduce the five- and six-byte forms. A library that rejects
-     them calls such a sequence invalid where we call it incomplete, which is a
-     disagreement about a dialect rather than about UTF-8. */
-  if ( !libc_extended && n > 0 && (unsigned char)bytes[0] >= 0xF8 ) {
+  /* Where the dialects part company. A strict library speaks exactly "Unicode
+     scalars up to U+10FFFF", so every lead byte that can only introduce
+     something above that is outside the shared language: 0xF5..0xF7 begin
+     four-byte forms for U+140000 and up, and 0xF8..0xFD begin the obsolete
+     five- and six-byte forms. On such a library those are invalid where we say
+     incomplete -- a disagreement about which dialect, not about UTF-8.
+
+     0xF5, not 0xF8. Getting this boundary wrong is what made the first attempt
+     at this fix still fail on macOS. */
+  if ( !libc_extended && n > 0 && (unsigned char)bytes[0] >= 0xF5 ) {
     return;
   }
 
