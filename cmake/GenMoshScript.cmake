@@ -37,3 +37,10 @@ endif()
 if(NOT _existing STREQUAL _content)
   file(WRITE "${OUT}" "${_content}")
 endif()
+
+# install(PROGRAMS) would set the mode on the installed copy only, and the
+# scripted tests run the one in the build tree. Unconditional because a build
+# that skipped the write above still has to end up with it set.
+if(NOT WIN32)
+  execute_process(COMMAND chmod a+x "${OUT}")
+endif()

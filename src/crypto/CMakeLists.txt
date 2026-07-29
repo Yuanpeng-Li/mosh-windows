@@ -13,7 +13,8 @@ add_library(moshcrypto STATIC
   crypto.cc crypto.h
   prng.h)
 
-target_link_libraries(moshcrypto PUBLIC mosh_common OpenSSL::Crypto)
+# Empty for apple-common-crypto: CommonCrypto lives in libSystem.
+target_link_libraries(moshcrypto PUBLIC mosh_common ${MOSH_CRYPTO_LIBS})
 
 if(WIN32)
   # BCryptGenRandom, the entropy source in src/crypto/prng.h.

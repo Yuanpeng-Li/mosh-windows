@@ -71,13 +71,29 @@ endif()
 
 option(MOSH_BUILD_CLIENT   "Build mosh-client" ON)
 option(MOSH_BUILD_SERVER   "Build mosh-server" ON)
-# The example programs under src/examples are POSIX-only (ntester.cc reaches
-# straight into Network::fds()). Not wired up yet -- the option exists so the
-# autotools --enable-examples equivalent has a home once they are ported.
-option(MOSH_BUILD_EXAMPLES "Build the example programs (POSIX only, not yet implemented)" OFF)
-if(MOSH_BUILD_EXAMPLES)
-  message(FATAL_ERROR "MOSH_BUILD_EXAMPLES is not implemented in the CMake build yet; use the autotools build with --enable-examples")
+# The example programs under src/examples are POSIX-only: ntester.cc drives a
+# terminal through <termios.h> and pty_compat.
+option(MOSH_BUILD_EXAMPLES "Build the example programs, as --enable-examples does (POSIX only)" OFF)
+if(MOSH_BUILD_EXAMPLES AND WIN32)
+  message(FATAL_ERROR "MOSH_BUILD_EXAMPLES is POSIX-only")
 endif()
+
+# --enable-fuzzing. configure.ac probes for this before the warning-flag
+# wrapper, because -fsanitize=fuzzer has to survive to the link line; same
+# reason it is checked here rather than folded in with the other flags.
+option(MOSH_ENABLE_FUZZING "Build the libFuzzer entry points under src/fuzz" OFF)
+set(MOSH_FUZZING_FLAGS "")
+if(MOSH_ENABLE_FUZZING)
+  include(CheckCXXCompilerFlag)
+  set(CMAKE_REQUIRED_LINK_OPTIONS -fsanitize=fuzzer)
+  check_cxx_compiler_flag(-fsanitize=fuzzer MOSH_HAVE_SANITIZE_FUZZER)
+  unset(CMAKE_REQUIRED_LINK_OPTIONS)
+  if(NOT MOSH_HAVE_SANITIZE_FUZZER)
+    message(FATAL_ERROR "MOSH_ENABLE_FUZZING requires a compiler with -fsanitize=fuzzer (clang)")
+  endif()
+  set(MOSH_FUZZING_FLAGS -fsanitize=fuzzer)
+endif()
+
 option(MOSH_HARDEN         "Enable hardening flags (matches configure --enable-hardening)" ON)
 
 include(CTest)
@@ -102,7 +118,63 @@ else()
 endif()
 
 find_package(ZLIB REQUIRED)
-find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+
+# --------------------------------------------------------- crypto backend --
+# configure.ac:363-425. The spellings are configure's, so a build recipe reads
+# the same either way; `openssl` means mosh's own OCB over OpenSSL's AES, which
+# is what upstream ships.
+check_include_file(CommonCrypto/CommonCrypto.h HAVE_COMMONCRYPTO_COMMONCRYPTO_H)
+if(HAVE_COMMONCRYPTO_COMMONCRYPTO_H)
+  set(_mosh_crypto_default "apple-common-crypto")
+else()
+  set(_mosh_crypto_default "openssl")
+endif()
+set(MOSH_CRYPTO_LIBRARY "${_mosh_crypto_default}" CACHE STRING
+    "AES backend: openssl, openssl-with-openssl-ocb, nettle or apple-common-crypto")
+set(_mosh_crypto_choices
+    openssl openssl-with-internal-ocb openssl-with-openssl-ocb
+    nettle apple-common-crypto)
+set_property(CACHE MOSH_CRYPTO_LIBRARY PROPERTY STRINGS ${_mosh_crypto_choices})
+if(NOT MOSH_CRYPTO_LIBRARY IN_LIST _mosh_crypto_choices)
+  message(FATAL_ERROR "bad value ${MOSH_CRYPTO_LIBRARY} for MOSH_CRYPTO_LIBRARY")
+endif()
+
+# Derived, not a knob of its own: src/crypto/CMakeLists.txt reads it to pick
+# between ocb_openssl.cc and ocb_internal.cc.
+set(MOSH_USE_OPENSSL_OCB OFF)
+set(MOSH_CRYPTO_LIBS "")
+if(MOSH_CRYPTO_LIBRARY MATCHES "^openssl")
+  find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+  set(USE_OPENSSL_AES 1)
+  set(MOSH_CRYPTO_LIBS OpenSSL::Crypto)
+  if(MOSH_CRYPTO_LIBRARY STREQUAL "openssl-with-openssl-ocb")
+    # ocb_openssl.cc needs EVP_aes_128_ocb, which OpenSSL builds configured
+    # with no-ocb do not export.
+    include(CheckSymbolExists)
+    set(CMAKE_REQUIRED_LIBRARIES OpenSSL::Crypto)
+    check_symbol_exists(EVP_aes_128_ocb "openssl/evp.h" MOSH_HAVE_EVP_AES_OCB)
+    unset(CMAKE_REQUIRED_LIBRARIES)
+    if(NOT MOSH_HAVE_EVP_AES_OCB)
+      message(FATAL_ERROR "found OpenSSL without AES-OCB support")
+    endif()
+    set(MOSH_USE_OPENSSL_OCB ON)
+    set(MOSH_CRYPTO_DESCRIPTION "OpenSSL OCB, OpenSSL AES")
+  else()
+    set(MOSH_CRYPTO_DESCRIPTION "internal OCB, OpenSSL AES")
+  endif()
+elseif(MOSH_CRYPTO_LIBRARY STREQUAL "nettle")
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(NETTLE REQUIRED IMPORTED_TARGET nettle)
+  set(USE_NETTLE_AES 1)
+  set(MOSH_CRYPTO_LIBS PkgConfig::NETTLE)
+  set(MOSH_CRYPTO_DESCRIPTION "internal OCB, Nettle AES")
+elseif(MOSH_CRYPTO_LIBRARY STREQUAL "apple-common-crypto")
+  if(NOT HAVE_COMMONCRYPTO_COMMONCRYPTO_H)
+    message(FATAL_ERROR "Apple Common Crypto header not found")
+  endif()
+  set(USE_APPLE_COMMON_CRYPTO_AES 1)
+  set(MOSH_CRYPTO_DESCRIPTION "internal OCB, Apple Common Crypto AES")
+endif()
 
 # Terminal capability database. On Windows there is none -- the client uses a
 # built-in xterm-256color table instead (see src/terminal).
@@ -159,12 +231,6 @@ endif()
 # ------------------------------------------------------------- config.h -----
 
 include(MoshChecks)
-
-# mosh's own OCB implementation on top of OpenSSL's AES is the configure
-# default (--with-crypto-library=openssl); ocb_openssl.cc is only used with
-# openssl-with-openssl-ocb.
-set(USE_OPENSSL_AES 1)
-set(MOSH_USE_OPENSSL_OCB OFF CACHE BOOL "Use OpenSSL's EVP_aes_128_ocb instead of the bundled OCB")
 
 set(PACKAGE         "mosh")
 set(PACKAGE_NAME    "mosh")
@@ -292,7 +358,16 @@ if(BUILD_TESTING)
   add_subdirectory(src/tests)
 endif()
 
-if(NOT WIN32 AND MOSH_BUILD_CLIENT)
+if(MOSH_BUILD_EXAMPLES)
+  add_subdirectory(src/examples)
+endif()
+
+if(MOSH_ENABLE_FUZZING)
+  add_subdirectory(src/fuzz)
+endif()
+
+if(MOSH_BUILD_CLIENT)
+  # Both platforms need a launcher; scripts/CMakeLists.txt picks which.
   add_subdirectory(scripts)
 endif()
 
@@ -309,4 +384,5 @@ message(STATUS "  client       : ${MOSH_BUILD_CLIENT}")
 message(STATUS "  server       : ${MOSH_BUILD_SERVER}")
 message(STATUS "  protoc       : ${MOSH_PROTOC}")
 message(STATUS "  terminfo libs: ${MOSH_TINFO_LIBS}")
+message(STATUS "  cryptography : ${MOSH_CRYPTO_DESCRIPTION}")
 message(STATUS "")

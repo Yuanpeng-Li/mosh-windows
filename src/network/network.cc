@@ -281,7 +281,6 @@ bool Connection::try_bind( const char* addr, int port_low, int port_high )
 
     if ( local_addr.sa.sa_family == AF_INET6
          && memcmp( &local_addr.sin6.sin6_addr, &in6addr_any, sizeof( in6addr_any ) ) == 0 ) {
-      const int off = 0;
       if ( !set_dual_stack( sock() ) ) {
         fprintf( stderr, "setsockopt( IPV6_V6ONLY, off ): %s\n", socket_strerror( last_socket_error() ).c_str() );
       }

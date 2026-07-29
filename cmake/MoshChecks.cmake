@@ -166,9 +166,16 @@ endif()
 # as "declared", and use a plain discarded-value expression so that functions
 # (which have no sizeof) are handled too.
 function(_mosh_check_decl name headers out)
-  string(REPLACE ";" "\n#include <" _inc "${headers}")
+  # `headers` is a CMake list. Building the prologue by substituting inside one
+  # #include line loses the closing angle bracket on every header but the last,
+  # which turns any multi-header probe into a compile error and so into a
+  # silent "not declared".
+  set(_inc "")
+  foreach(_h IN LISTS headers)
+    string(APPEND _inc "#include <${_h}>\n")
+  endforeach()
   check_cxx_source_compiles("
-    #include <${_inc}>
+    ${_inc}
     int main(){
     #ifndef ${name}
       (void) ${name};
@@ -189,9 +196,21 @@ if(WIN32)
   set(HAVE_DECL___BUILTIN_BSWAP64 0)
   set(HAVE_DECL___BUILTIN_CTZ 0)
 else()
-  _mosh_check_decl(be64toh "endian.h" HAVE_DECL_BE64TOH)
-  _mosh_check_decl(betoh64 "endian.h" HAVE_DECL_BETOH64)
-  _mosh_check_decl(bswap64 "sys/endian.h" HAVE_DECL_BSWAP64)
+  # configure.ac:498-503 asks for all of these behind one prologue, and the
+  # prologue is a choice, not a union: glibc has <endian.h>, the BSDs have
+  # <sys/endian.h> (needing <sys/types.h> first), and neither has the other.
+  # Naming a fixed header per function makes the BSD answers come out "no",
+  # which silently drops mosh onto the portable byte-swap fallback.
+  if(HAVE_ENDIAN_H)
+    set(_mosh_endian_headers endian.h)
+  elseif(HAVE_SYS_ENDIAN_H)
+    set(_mosh_endian_headers sys/types.h sys/endian.h)
+  else()
+    set(_mosh_endian_headers "")
+  endif()
+  _mosh_check_decl(be64toh "${_mosh_endian_headers}" HAVE_DECL_BE64TOH)
+  _mosh_check_decl(betoh64 "${_mosh_endian_headers}" HAVE_DECL_BETOH64)
+  _mosh_check_decl(bswap64 "${_mosh_endian_headers}" HAVE_DECL_BSWAP64)
   _mosh_check_decl(ffs "strings.h" HAVE_DECL_FFS)
   check_cxx_source_compiles("int main(){ return (int)__builtin_bswap64(1ULL); }"
                             _bswap64_builtin)
@@ -206,6 +225,18 @@ else()
     set(HAVE_DECL___BUILTIN_CTZ 1)
   else()
     set(HAVE_DECL___BUILTIN_CTZ 0)
+  endif()
+
+  # configure.ac:505-511. Only asked when the endian.h family came up empty,
+  # which on a supported system means macOS. src/crypto/byteorder.h reaches for
+  # this before falling back to its own shift-and-mask routines.
+  if(NOT HAVE_DECL_BE64TOH AND NOT HAVE_DECL_BETOH64)
+    _mosh_check_decl(OSSwapHostToBigInt64 "libkern/OSByteOrder.h" _mosh_osx_swap)
+    if(_mosh_osx_swap)
+      set(HAVE_OSX_SWAP 1)
+    else()
+      message(WARNING "Unable to find byte swapping functions; using built-in routines.")
+    endif()
   endif()
 endif()
 
