@@ -1,7 +1,7 @@
 winget packaging
 ================
 
-Manifests for `YuanpengLi.MoshWindows`, the Windows launcher.
+Manifests for `YuanpengLi.MoshWindows`.
 
 Layout follows the winget-pkgs convention exactly, so the version directory can
 be copied straight into a fork of that repository:
@@ -13,12 +13,16 @@ manifests/y/YuanpengLi/MoshWindows/<version>/
     YuanpengLi.MoshWindows.locale.en-US.yaml  description, license, tags
 ```
 
-The package installs the launcher only — `mosh.exe`, `mosh.ps1`, `mosh.cmd`.
-It deliberately does **not** bundle `mosh-client.exe`: that binary belongs to
-[MoshCatty](https://github.com/binaricat/MoshCatty), a separate GPLv3 project,
-and redistributing it would put the obligation to supply matching source on
-this repository. `mosh --setup` downloads it from its own release and checks it
-against a pinned SHA-256.
+The package installs all three programs — `mosh.exe` (the launcher),
+`mosh-client.exe` and `mosh-server.exe` — plus `mosh.ps1` and `mosh.cmd`. Each
+of the three gets a `PortableCommandAlias`, and `mosh-server` needs its own
+because the client asks ssh to run it by that name.
+
+This paragraph used to say the package shipped the launcher alone and that
+`mosh --setup` fetched a third-party client. That stopped being true when this
+fork gained a real `mosh-client.exe` and `mosh-server.exe`, and the description
+did not follow. It is recorded here because it is the kind of drift the
+"Cutting a new version" section below now exists to prevent.
 
 `NestedInstallerType: portable` requires an `.exe`; a `.cmd` is rejected with
 *"The file type of the referenced file is not allowed"*. That is one of the
@@ -34,24 +38,25 @@ winget settings --enable LocalManifestFiles     # admin, once
 winget install --manifest packaging\winget\manifests\y\YuanpengLi\MoshWindows\0.2.0
 winget settings --disable LocalManifestFiles    # put it back
 
-mosh --setup
+mosh --local localhost    # the install is complete; no --setup step
 mosh user@host
 ```
 
 Cutting a new version
 ---------------------
 
-1. Build `mosh.exe`:
+1. Do not build the archive by hand. `.github/workflows/windows.yml` assembles
+   it on every push, checks its contents against the list the manifests name,
+   and uploads it as the `mosh-windows-x64` artifact with its SHA-256 in the
+   log. Take that artifact.
 
-   ```
-   cl /nologo /EHsc /std:c++17 /O2 /W3 scripts\mosh-launcher.cc /Fe:mosh.exe shell32.lib
-   ```
+   The archive has one top-level `mosh\` directory — which is what makes
+   `NestedInstallerFiles`' `mosh\mosh.exe` resolve — containing `mosh.exe`,
+   `mosh-client.exe`, `mosh-server.exe`, `mosh.ps1`, `mosh.cmd`, `COPYING` and
+   `README.windows.md`.
 
-2. Assemble the archive with a single top-level `mosh\` directory containing
-   `mosh.exe`, `mosh.ps1`, `mosh.cmd`, `README.txt` and `COPYING.txt`, named
-   `mosh-windows-launcher-<tag>.zip`.
-
-3. Attach it to the GitHub release for `<tag>`.
+2. Rename it to `mosh-windows-x64-<tag>.zip` and attach it to the GitHub
+   release for `<tag>`.
 
 4. Copy the previous version directory to the new version number and update
    `PackageVersion` in all three files, plus `InstallerUrl`, `InstallerSha256`

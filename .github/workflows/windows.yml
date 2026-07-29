@@ -110,6 +110,38 @@ jobs:
         Write-Host "$($srv.Count) detached server(s) still running, as intended"
         $srv | Stop-Process -Force
 
+    # Build the release archive here rather than by hand. It was assembled
+    # manually for v0.2.0, and packaging/winget/README.md had already drifted
+    # away from describing what the manifests actually ship -- which is what a
+    # manual step does, given time. Produced on every run so it is exercised,
+    # not only when a tag makes it matter.
+    - name: assemble the release archive
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $stage = "stage\mosh"
+        New-Item -ItemType Directory -Path $stage -Force | Out-Null
+        foreach ($name in 'mosh.exe', 'mosh-client.exe', 'mosh-server.exe') {
+          $exe = Get-ChildItem -Path build -Recurse -Filter $name |
+                 Select-Object -First 1 -ExpandProperty FullName
+          if (-not $exe) { throw "$name was not built" }
+          Copy-Item $exe $stage
+        }
+        Copy-Item scripts\mosh.ps1, scripts\mosh.cmd, COPYING, README.windows.md $stage
+        # The layout the manifests name: one top-level mosh\ directory, so
+        # NestedInstallerFiles' mosh\mosh.exe resolves.
+        $expected = @('COPYING','README.windows.md','mosh-client.exe','mosh-server.exe','mosh.cmd','mosh.exe','mosh.ps1')
+        $got = (Get-ChildItem $stage | Select-Object -ExpandProperty Name | Sort-Object)
+        if (Compare-Object $expected $got) {
+          throw "archive contents drifted: got $($got -join ', ')"
+        }
+        Compress-Archive -Path $stage -DestinationPath mosh-windows-x64.zip -CompressionLevel Optimal
+        Write-Host ("SHA256 " + (Get-FileHash mosh-windows-x64.zip -Algorithm SHA256).Hash)
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: mosh-windows-x64
+        path: mosh-windows-x64.zip
+
   cmake-posix:
     name: cmake / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
