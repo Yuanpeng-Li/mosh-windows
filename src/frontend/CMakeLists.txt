@@ -25,7 +25,13 @@ if(MOSH_BUILD_CLIENT)
 endif()
 
 if(MOSH_BUILD_SERVER)
-  add_executable(mosh-server mosh-server.cc)
+  set(_mosh_server_sources mosh-server.cc)
+  if(WIN32)
+    # What fork() does on POSIX: see the header for why it cannot be one
+    # portable function.
+    list(APPEND _mosh_server_sources win32detach.cc win32detach.h)
+  endif()
+  add_executable(mosh-server ${_mosh_server_sources})
   target_link_libraries(mosh-server PRIVATE mosh_common ${_mosh_link_libs})
   add_dependencies(mosh-server mosh_version)
   if(NOT WIN32)

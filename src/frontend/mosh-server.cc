@@ -43,18 +43,27 @@
 #include <sstream>
 #include <typeinfo>
 
+#include <inttypes.h>
+#include <sys/types.h>
+
+#if defined( _WIN32 )
+#include <io.h>
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
 #include <err.h>
 #include <fcntl.h>
-#include <inttypes.h>
 #include <netdb.h>
 #include <pwd.h>
 #include <strings.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
-#include <sys/types.h>
 #include <termios.h>
 #include <unistd.h>
+#endif
 #ifdef HAVE_UTEMPTER
 #include <utempter.h>
 #endif
@@ -70,6 +79,7 @@
 #include <paths.h>
 #endif
 
+#if !defined( _WIN32 )
 #if HAVE_PTY_H
 #include <pty.h>
 #elif HAVE_UTIL_H
@@ -79,12 +89,15 @@
 #if FORKPTY_IN_LIBUTIL
 #include <libutil.h>
 #endif
+#endif
 
 #include "src/statesync/completeterminal.h"
 #include "src/statesync/user.h"
 #include "src/util/fatal_assert.h"
 #include "src/util/locale_utils.h"
+#if !defined( _WIN32 )
 #include "src/util/pty_compat.h"
+#endif
 #include "src/util/select.h"
 #include "src/util/swrite.h"
 #include "src/util/timestamp.h"
@@ -96,12 +109,15 @@
 #include "src/network/networktransport-impl.h"
 
 #include "src/util/compat.h"
+#include "src/util/ptyhost.h"
+#if defined( _WIN32 )
+#include "src/frontend/win32detach.h"
+#endif
 #include "src/network/socketio.h"
 
 using ServerConnection = Network::Transport<Terminal::Complete, Network::UserStream>;
 
-static void serve( int host_fd,
-                   int pipe_fd,
+static void serve( PtyHost& pty,
                    Terminal::Complete& terminal,
                    ServerConnection& network,
                    long network_timeout,
@@ -132,10 +148,15 @@ static void print_usage( FILE* stream, const char* argv0 )
            argv0 );
 }
 
+#if !defined( _WIN32 )
+/* Login-session housekeeping the pty child does for itself. None of it has a
+   Windows counterpart: there is no motd, no /etc/nologin convention and no
+   utmp to consult. */
 static bool print_motd( const char* filename );
 static void chdir_homedir( void );
 static bool motd_hushed( void );
 static void warn_unattached( const std::string& ignore_entry );
+#endif
 
 /* Simple spinloop */
 static void spin( void )
@@ -299,6 +320,21 @@ int main( int argc, char* argv[] )
 #endif
 
   /* Get shell */
+#if defined( _WIN32 )
+  std::vector<std::string> win_shell;
+  std::vector<char*> win_shell_argv;
+  if ( !command_argv ) {
+    win_shell = Win32Detach::default_shell();
+    for ( size_t i = 0; i < win_shell.size(); i++ ) {
+      win_shell_argv.push_back( const_cast<char*>( win_shell[i].c_str() ) );
+    }
+    win_shell_argv.push_back( NULL );
+    command_path = win_shell[0];
+    command_argv = &win_shell_argv[0];
+    /* No motd on Windows: there is no such file, and no login shell
+       convention of printing one. */
+  }
+#else
   char* my_argv[2];
   std::string shell_name;
   if ( !command_argv ) {
@@ -336,6 +372,7 @@ int main( int argc, char* argv[] )
 
     with_motd = true;
   }
+#endif
 
   if ( command_path.empty() ) {
     command_path = command_argv[0];
@@ -427,6 +464,8 @@ static int run_server( const char* desired_ip,
     }
   }
   /* get initial window size */
+  int window_cols = 80, window_rows = 24;
+#if !defined( _WIN32 )
   struct winsize window_size;
   if ( ioctl( STDIN_FILENO, TIOCGWINSZ, &window_size ) < 0 || window_size.ws_col == 0 || window_size.ws_row == 0 ) {
     /* Fill in sensible defaults. */
@@ -435,9 +474,25 @@ static int run_server( const char* desired_ip,
     window_size.ws_col = 80;
     window_size.ws_row = 24;
   }
+  window_cols = window_size.ws_col;
+  window_rows = window_size.ws_row;
+#else
+  /* Nothing to ask: mosh-server is started by ssh without a pty, and the
+     detached copy has no console at all. */
+#endif
+
+#if defined( _WIN32 )
+  /* Windows has no fork, so the detached server is a second run of this
+     program. Everything above is repeated there and is cheap; everything
+     below -- the key, the port, the pty -- must happen only in the copy that
+     is going to outlive this ssh session. */
+  if ( !Win32Detach::is_detached() ) {
+    return Win32Detach::spawn() < 0 ? 1 : 0;
+  }
+#endif
 
   /* open parser and terminal */
-  Terminal::Complete terminal( window_size.ws_col, window_size.ws_row );
+  Terminal::Complete terminal( window_cols, window_rows );
 
   /* open network */
   Network::UserStream blank;
@@ -452,10 +507,56 @@ static int run_server( const char* desired_ip,
    * detection of the MOSH CONNECT message.  Print it on a new line to bodge
    * around that.
    */
+#if !defined( _WIN32 )
   if ( isatty( STDIN_FILENO ) ) {
     puts( "\r\n" );
   }
+#endif
   printf( "MOSH CONNECT %s %s\n", network->port().c_str(), network->get_key().c_str() );
+  fflush( stdout );
+
+#if defined( _WIN32 )
+  /* This is already the detached copy; what stdout points at is the pipe the
+     launcher is reading, and ssh does not finish disconnecting until every
+     handle to it is gone. Hand it back now that the one line that had to
+     reach the launcher has. */
+  Win32Detach::release_stdio( verbose );
+
+  {
+    /* What the POSIX child sets for itself between forkpty() and execvp().
+       There is no such window here -- the pty child is created already
+       running -- so it is set on this process, which the child inherits. */
+    setenv( "TERM", ( colors == 256 ) ? "xterm-256color" : "xterm", 1 );
+    setenv( "NCURSES_NO_UTF8_ACS", "1", 1 );
+    unsetenv( "STY" );
+
+    std::vector<std::string> args;
+    for ( char** a = command_argv; a && *a; a++ ) {
+      args.push_back( *a );
+    }
+    if ( !args.empty() ) {
+      args[0] = command_path;
+    }
+
+    PtyHost pty;
+    if ( !pty.start( args, window_cols, window_rows ) ) {
+      return 1;
+    }
+
+    try {
+      serve( pty, terminal, *network, network_timeout, network_signaled_timeout );
+    } catch ( const Network::NetworkException& e ) {
+      fprintf( stderr, "Network exception: %s\n", e.what() );
+    } catch ( const Crypto::CryptoException& e ) {
+      fprintf( stderr, "Crypto exception: %s\n", e.what() );
+    }
+
+    pty.close();
+  }
+
+  fputs( "\n[mosh-server is exiting.]\n", stdout );
+  return 0;
+#else
 
   /* don't let signals kill us */
   struct sigaction sa;
@@ -646,6 +747,9 @@ static int run_server( const char* desired_ip,
       exit( 1 );
     }
 
+    PtyHost pty;
+    pty.adopt( master, pipes[1] );
+
     /* Drop unnecessary privileges */
 #ifdef HAVE_PLEDGE
     /* OpenBSD pledge() syscall */
@@ -657,11 +761,11 @@ static int run_server( const char* desired_ip,
 
 #ifdef HAVE_UTEMPTER
     /* make utmp entry */
-    utempter_add_record( master, utmp_entry );
+    utempter_add_record( pty.master(), utmp_entry );
 #endif
 
     try {
-      serve( master, pipes[1], terminal, *network, network_timeout, network_signaled_timeout );
+      serve( pty, terminal, *network, network_timeout, network_signaled_timeout );
     } catch ( const Network::NetworkException& e ) {
       fprintf( stderr, "Network exception: %s\n", e.what() );
     } catch ( const Crypto::CryptoException& e ) {
@@ -669,22 +773,19 @@ static int run_server( const char* desired_ip,
     }
 
 #ifdef HAVE_UTEMPTER
-    utempter_remove_record( master );
+    utempter_remove_record( pty.master() );
 #endif
 
-    if ( close( master ) < 0 ) {
-      perror( "close" );
-      exit( 1 );
-    }
+    pty.close();
   }
 
   fputs( "\n[mosh-server is exiting.]\n", stdout );
 
   return 0;
+#endif
 }
 
-static void serve( int host_fd,
-                   int pipe_fd,
+static void serve( PtyHost& pty,
                    Terminal::Complete& terminal,
                    ServerConnection& network,
                    long network_timeout,
@@ -753,7 +854,7 @@ static void serve( int host_fd,
       Network::socket_t network_fd = fd_list.back();
       sel.add_socket( network_fd );
       if ( !network.shutdown_in_progress() ) {
-        sel.add_handle( host_fd );
+        pty.add_to( sel );
       }
 
       int active_fds = sel.select( timeout );
@@ -789,15 +890,7 @@ static void serve( int host_fd,
               }
               /* tell child process of resize */
               const Parser::Resize& res = static_cast<const Parser::Resize&>( action );
-              struct winsize window_size;
-              if ( ioctl( host_fd, TIOCGWINSZ, &window_size ) < 0 ) {
-                perror( "ioctl TIOCGWINSZ" );
-                network.start_shutdown();
-              }
-              window_size.ws_col = res.width;
-              window_size.ws_row = res.height;
-              if ( ioctl( host_fd, TIOCSWINSZ, &window_size ) < 0 ) {
-                perror( "ioctl TIOCSWINSZ" );
+              if ( !pty.resize( res.width, res.height ) ) {
                 network.start_shutdown();
               }
             }
@@ -842,10 +935,10 @@ static void serve( int host_fd,
             }
 
 #ifdef HAVE_UTEMPTER
-            utempter_remove_record( host_fd );
+            utempter_remove_record( pty.master() );
             char tmp[64 + NI_MAXHOST];
             snprintf( tmp, 64 + NI_MAXHOST, "%s via mosh [%ld]", host, static_cast<long int>( getpid() ) );
-            utempter_add_record( host_fd, tmp );
+            utempter_add_record( pty.master(), tmp );
 
             connected_utmp = true;
 #endif
@@ -858,21 +951,25 @@ static void serve( int host_fd,
 
           /* Tell child to start login session. */
           if ( !child_released ) {
-            if ( close( pipe_fd ) < 0 ) {
-              err( 1, "child release" );
-            }
+            pty.release();
             child_released = true;
           }
         }
       }
 
-      if ( ( !network.shutdown_in_progress() ) && sel.read_handle( host_fd ) ) {
+      if ( ( !network.shutdown_in_progress() ) && pty.exited( sel ) ) {
+        /* The command is gone. On POSIX this arrives as end of file below;
+           on Windows the pty's pipe stays open and this is the only sign. */
+        network.start_shutdown();
+      }
+
+      if ( ( !network.shutdown_in_progress() ) && pty.readable( sel ) ) {
         /* input from the host needs to be fed to the terminal */
         const int buf_size = 16384;
         char buf[buf_size];
 
         /* fill buffer if possible */
-        ssize_t bytes_read = read( host_fd, buf, buf_size );
+        ssize_t bytes_read = pty.read( buf, buf_size );
 
         /* If the pty slave is closed, reading from the master can fail with
            EIO (see #264).  So we treat errors on read() like EOF. */
@@ -887,7 +984,7 @@ static void serve( int host_fd,
       }
 
       /* write user input and terminal writeback to the host */
-      if ( swrite( host_fd, terminal_to_host.c_str(), terminal_to_host.length() ) < 0 ) {
+      if ( pty.write( terminal_to_host.c_str(), terminal_to_host.length() ) < 0 ) {
         network.start_shutdown();
       }
 
@@ -933,11 +1030,11 @@ static void serve( int host_fd,
 #ifdef HAVE_UTEMPTER
       /* update utmp if has been more than 30 seconds since heard from client */
       if ( connected_utmp && time_since_remote_state > 30000 ) {
-        utempter_remove_record( host_fd );
+        utempter_remove_record( pty.master() );
 
         char tmp[64];
         snprintf( tmp, 64, "mosh [%ld]", static_cast<long int>( getpid() ) );
-        utempter_add_record( host_fd, tmp );
+        utempter_add_record( pty.master(), tmp );
 
         connected_utmp = false;
       }
@@ -971,6 +1068,8 @@ static void serve( int host_fd,
   syslog( LOG_INFO, "user %s session end", pw->pw_name );
 #endif
 }
+
+#if !defined( _WIN32 )
 
 /* Print the motd from a given file, if available */
 static bool print_motd( const char* filename )
@@ -1083,3 +1182,5 @@ static void warn_unattached( const std::string& ignore_entry )
   }
 #endif /* HAVE_UTMPX_H */
 }
+
+#endif /* !_WIN32 */

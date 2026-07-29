@@ -83,6 +83,10 @@ typedef SSIZE_T ssize_t;
 #include <cstddef>
 #include <ctime>
 
+/* Spelled with an underscore by the MSVC CRT, and only there. */
+#define strcasecmp _stricmp
+#define strncasecmp _strnicmp
+
 extern "C" {
 extern char* optarg;
 extern int optind, opterr, optopt;
