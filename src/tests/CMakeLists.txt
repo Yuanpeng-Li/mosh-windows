@@ -1,10 +1,12 @@
-# Only the C++ unit tests are wired into CTest.
+# Two kinds of test live here.
 #
-# The rest of the automake suite (local.test, the emulation-*.test family, the
-# e2e tests) is POSIX shell driving tmux and a pty, so it stays under
-# `make check` on POSIX and has no meaning on Windows. These four, by contrast,
-# are pure computation and are exactly the regression net we want available on
-# the Windows port.
+# The C++ unit tests are pure computation and run everywhere, including under
+# MSVC -- they are the regression net the Windows port is built against.
+#
+# The rest of the automake suite (local.test and the emulation-*.test family)
+# is POSIX shell driving tmux and a pty. It is where a change to the server,
+# the display or the protocol actually gets caught, so it is registered with
+# CTest too, guarded on being POSIX and on both binaries being built.
 
 add_executable(test-ocb-aes ocb-aes.cc test_utils.cc test_utils.h)
 target_link_libraries(test-ocb-aes PRIVATE mosh_common moshcrypto moshutil)
@@ -52,4 +54,80 @@ if(PERL_FOUND)
   add_test(NAME base64 COMMAND test-base64)
 else()
   message(STATUS "  base64 test   : skipped (no perl)")
+endif()
+
+# ----------------------------------------------------------- scripted -------
+# local.test and the display tests are the automake suite, run as-is: /bin/sh
+# scripts that expect automake's build layout. The CMake tree happens to have
+# the same shape -- ../frontend/mosh-{client,server} and ../../scripts/mosh,
+# relative to this directory -- so all they need is a working directory, the
+# two helper programs, and $srcdir pointing at the scripts themselves.
+#
+# One thing did have to change: e2e-test used to build the path it hands to the
+# shell inside tmux as "${PWD}/${test_script}", which only holds when the
+# harness invoked it by a bare filename. See docs/cmake-build.md.
+#
+# They are the coverage that matters for a change to the server, the display
+# or the protocol; the unit tests above would not have caught any of it.
+if(NOT WIN32 AND MOSH_BUILD_CLIENT AND MOSH_BUILD_SERVER)
+  # noinst_PROGRAMS: built for the suite to run, never installed.
+  add_executable(inpty inpty.cc)
+  target_link_libraries(inpty PRIVATE mosh_common moshutil)
+
+  add_executable(is-utf8-locale is-utf8-locale.cc)
+  target_link_libraries(is-utf8-locale PRIVATE mosh_common moshutil)
+
+  # $(displaytests) from Makefile.am. Listed rather than globbed so that a new
+  # test file has to be added deliberately, in both build systems.
+  set(_mosh_scripted_tests
+    local
+    e2e-success
+    e2e-failure
+    emulation-ascii-iso-8859
+    emulation-80th-column
+    emulation-attributes-vt100
+    emulation-attributes-16color
+    emulation-attributes-256color8
+    emulation-attributes-256color248
+    emulation-attributes-truecolor
+    emulation-attributes-bce
+    emulation-attributes-osc8
+    emulation-back-tab
+    emulation-cursor-motion
+    emulation-multiline-scroll
+    emulation-scroll
+    emulation-wrap-across-frames
+    network-no-diff
+    prediction-unicode
+    pty-deadlock
+    repeat
+    repeat-with-input
+    server-network-timeout
+    server-signal-timeout
+    window-resize
+    unicode-combine-fallback-assert
+    unicode-later-combining)
+
+  foreach(_t IN LISTS _mosh_scripted_tests)
+    add_test(NAME ${_t}
+             COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/${_t}.test"
+             WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    # 77 is the automake convention these scripts already follow, and they use
+    # it for the two things that are absent rather than broken: no tmux, and no
+    # UTF-8 locale.
+    set_tests_properties(${_t} PROPERTIES
+      ENVIRONMENT "srcdir=${CMAKE_CURRENT_SOURCE_DIR}"
+      SKIP_RETURN_CODE 77
+      TIMEOUT 300)
+  endforeach()
+
+  # XFAIL_TESTS. e2e-failure asserts the harness notices a failing test;
+  # emulation-attributes-256color8 is a known upstream difference.
+  set_tests_properties(e2e-failure emulation-attributes-256color8
+                       PROPERTIES WILL_FAIL TRUE)
+
+  # ctest does not build anything. Everything these scripts reach for by path
+  # -- inpty, is-utf8-locale, mosh-client, mosh-server and the generated
+  # scripts/mosh -- is in the default target already, which is why the guard
+  # above tests the options rather than the targets.
 endif()

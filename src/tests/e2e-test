@@ -123,7 +123,17 @@ shift
 test_args=$@
 # XXX could use AM testsubdir macro instead
 test_dir=$(basename "${test_name}").d
-test_script="${test_name}"
+
+# Resolve the script to an absolute path once, here, because it is later
+# embedded in a command line run by a shell inside tmux whose working
+# directory is not this one. How it arrives depends on the harness: automake
+# passes a bare filename, ctest an already-absolute path. Prefixing $PWD or
+# $srcdir at each use site, as this script used to, is right for exactly one
+# of those and produces a doubled path for the other.
+case "${test_name}" in
+    /*) test_script="${test_name}" ;;
+    *)  test_script="${PWD}/${test_name}" ;;
+esac
 
 tests_dir=$(dirname "${test_name}")
 if ! set_locale "${tests_dir}"; then
@@ -191,7 +201,7 @@ fi
 
 server_wrapper="\"${srcdir}/e2e-test-server\""
 if [ -n "$server" ]; then
-    server_wrapper="\"${srcdir}/${test_script}\" server"
+    server_wrapper="\"${test_script}\" server"
 fi
 tmux_stdin="${srcdir}/hold-stdin"
 if [ -n "$tmux" ];  then
@@ -216,7 +226,7 @@ for run in $server_tests; do
     # tmux <= 2.5 ignore -x/-y, but the client sets the session to 80x24.
     # tmux from 2017-05-27 and later should default to an 80x24 session,
     # but do use -x/-y on control-master clients.
-    ${tmux_stdin} tmux -f /dev/null -S "${tmux_socket}" -C new-session -x 80 -y 24 "${srcdir}/print-exitstatus ${client_wrapper} ${sut} ${server_wrapper} \"${PWD}/${test_dir}/${run}\" \"${PWD}/${test_script} ${run}\"" > "${test_dir}/${run}.tmux.log"
+    ${tmux_stdin} tmux -f /dev/null -S "${tmux_socket}" -C new-session -x 80 -y 24 "${srcdir}/print-exitstatus ${client_wrapper} ${sut} ${server_wrapper} \"${PWD}/${test_dir}/${run}\" \"${test_script} ${run}\"" > "${test_dir}/${run}.tmux.log"
     rv=$?
     rm -f "${tmux_socket}" "${test_dir}/tmux-socket"
     if [ $rv -ne 0 ]; then

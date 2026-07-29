@@ -1,4 +1,5 @@
 EXTRA_DIST = \
+	CMakeLists.txt \
 	hold-stdin print-exitstatus \
 	e2e-test e2e-test-server \
 	e2e-test-subrs \
