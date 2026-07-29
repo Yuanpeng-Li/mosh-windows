@@ -28,10 +28,10 @@ Testing locally
 ---------------
 
 ```powershell
-winget validate --manifest packaging\winget\manifests\y\YuanpengLi\MoshWindows\0.1.0
+winget validate --manifest packaging\winget\manifests\y\YuanpengLi\MoshWindows\0.2.0
 
 winget settings --enable LocalManifestFiles     # admin, once
-winget install --manifest packaging\winget\manifests\y\YuanpengLi\MoshWindows\0.1.0
+winget install --manifest packaging\winget\manifests\y\YuanpengLi\MoshWindows\0.2.0
 winget settings --disable LocalManifestFiles    # put it back
 
 mosh --setup
@@ -71,7 +71,7 @@ Until then, use the local-manifest path above or the one-line installer.
 ```powershell
 # wingetcreate handles the fork, branch, commit and PR
 winget install Microsoft.WingetCreate
-wingetcreate submit packaging\winget\manifests\y\YuanpengLi\MoshWindows\0.1.0
+wingetcreate submit packaging\winget\manifests\y\YuanpengLi\MoshWindows\0.2.0
 ```
 
 What review checks, and where this package stands:

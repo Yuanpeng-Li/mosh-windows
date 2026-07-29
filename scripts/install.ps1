@@ -1,11 +1,16 @@
 <#
-    Installer for the Windows mosh launcher.
+    Installer for mosh on Windows.
 
         irm https://raw.githubusercontent.com/Yuanpeng-Li/mosh-windows/windows/scripts/install.ps1 | iex
 
-    Installs mosh.ps1 and mosh.cmd into %LOCALAPPDATA%\Programs\mosh, puts that
-    directory on the user PATH, and fetches a mosh-client. Nothing is written
-    outside that directory except the one PATH entry. Nothing needs admin.
+    Installs mosh.exe, mosh.ps1, mosh.cmd, mosh-client.exe and mosh-server.exe
+    into %LOCALAPPDATA%\Programs\mosh and puts that directory on the user PATH.
+    Nothing is written outside that directory except the one PATH entry, and
+    nothing needs admin.
+
+    mosh-server has to be on PATH under its own name, not behind a shortcut:
+    when someone mosh-es *to* this machine, their client asks ssh to run
+    "mosh-server", and a session started by sshd sees only PATH.
 
     Uninstall:  mosh-uninstall   (dropped alongside), or delete the directory
                 and remove the PATH entry.
@@ -13,7 +18,7 @@
     Parameters:
       -Version <tag>   install a specific release tag instead of the newest
       -Dir <path>      install somewhere else
-      -NoClient        skip downloading mosh-client
+      -FromZip <path>  install a locally built archive instead of downloading
       -NoPath          do not touch PATH
 #>
 
@@ -21,7 +26,7 @@
 param(
     [string] $Version,
     [string] $Dir = "$env:LOCALAPPDATA\Programs\mosh",
-    [switch] $NoClient,
+    [string] $FromZip,
     [switch] $NoPath
 )
 
@@ -35,7 +40,7 @@ function Fail($m)  { Write-Host "!!  $m" -ForegroundColor Red; exit 1 }
 
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
 
-Step "Installing the mosh launcher for Windows"
+Step "Installing mosh for Windows"
 
 # ---------------------------------------------------------------- prereqs --
 
@@ -52,25 +57,34 @@ if (-not (Get-Command ssh -ErrorAction SilentlyContinue)) {
 # The release archive, not individual raw files: it carries mosh.exe, which is
 # a binary and so is not in the git tree.
 
-if (-not $Version) {
-    try {
-        $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -UseBasicParsing
-        $Version = $rel.tag_name
-    } catch {
-        Fail "could not reach the GitHub API to find the latest release -- $_"
+$downloaded = $false
+if ($FromZip) {
+    if (-not (Test-Path -LiteralPath $FromZip)) { Fail "no such archive: $FromZip" }
+    $tmpZip = (Resolve-Path -LiteralPath $FromZip).Path
+    Info "Using $tmpZip"
+} else {
+    if (-not $Version) {
+        try {
+            $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -UseBasicParsing
+            $Version = $rel.tag_name
+        } catch {
+            Fail "could not reach the GitHub API to find the latest release -- $_"
+        }
     }
-}
-Info "Release $Version"
+    Info "Release $Version"
 
-$zipName = "mosh-windows-launcher-$Version.zip"
-$zipUrl  = "https://github.com/$Repo/releases/download/$Version/$zipName"
+    $arch = if ([Environment]::Is64BitOperatingSystem -and $env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
+    $zipName = "mosh-windows-$arch-$Version.zip"
+    $zipUrl  = "https://github.com/$Repo/releases/download/$Version/$zipName"
 
-Step "Downloading $zipName"
-$tmpZip = Join-Path ([System.IO.Path]::GetTempPath()) ("mosh-" + [Guid]::NewGuid().ToString('N') + '.zip')
-try {
-    Invoke-WebRequest -Uri $zipUrl -OutFile $tmpZip -UseBasicParsing
-} catch {
-    Fail "could not download $zipUrl -- $_"
+    Step "Downloading $zipName"
+    $tmpZip = Join-Path ([System.IO.Path]::GetTempPath()) ("mosh-" + [Guid]::NewGuid().ToString('N') + '.zip')
+    try {
+        Invoke-WebRequest -Uri $zipUrl -OutFile $tmpZip -UseBasicParsing
+    } catch {
+        Fail "could not download $zipUrl -- $_"
+    }
+    $downloaded = $true
 }
 
 Step "Installing into $Dir"
@@ -86,7 +100,7 @@ try {
         Info $_.Name
     }
 } finally {
-    Remove-Item -LiteralPath $tmpZip -Force -ErrorAction SilentlyContinue
+    if ($downloaded) { Remove-Item -LiteralPath $tmpZip -Force -ErrorAction SilentlyContinue }
     Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
@@ -119,14 +133,17 @@ if (-not $NoPath) {
     }
 }
 
-# ----------------------------------------------------------------- client --
+# --------------------------------------------------------------- firewall --
+# Only needed to be reached *by* mosh. Adding it needs admin, so it is printed
+# rather than attempted: an installer that silently opens a port is not one
+# people should run from a URL.
 
-if (-not $NoClient) {
-    Step "Fetching a mosh-client"
-    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Dir 'mosh.ps1') --setup
-    if ($LASTEXITCODE -ne 0) {
-        Warn "client setup failed; run 'mosh --setup' yourself later."
-    }
+$serverExe = Join-Path $Dir 'mosh-server.exe'
+$haveRule = $false
+if (Test-Path $serverExe) {
+    try {
+        $haveRule = $null -ne (Get-NetFirewallRule -DisplayName 'mosh-server (UDP)' -ErrorAction SilentlyContinue)
+    } catch { }
 }
 
 # ------------------------------------------------------------------- done --
@@ -138,9 +155,24 @@ Write-Host @"
 
       mosh user@host
 
-  The remote host needs mosh-server installed (apt install mosh, brew install
-  mosh, dnf install mosh). Nothing else is required there.
+  To reach a Linux or Mac host, it needs mosh installed there (apt install
+  mosh, brew install mosh, dnf install mosh). Nothing else is required.
 
       mosh --help          all options
       mosh-uninstall       remove everything this installed
 "@
+
+if ((Test-Path $serverExe) -and -not $haveRule) {
+    Write-Host ""
+    Write-Host @"
+  To let other machines mosh *to* this one, run this once in an elevated
+  PowerShell. It is per-program rather than per-port because mosh picks a
+  port in 60000-61000 and may change it while roaming:
+
+      New-NetFirewallRule -DisplayName 'mosh-server (UDP)' ``
+        -Direction Inbound -Action Allow -Protocol UDP ``
+        -Program '$serverExe' -Profile Any
+
+  Undo with:  Remove-NetFirewallRule -DisplayName 'mosh-server (UDP)'
+"@
+}

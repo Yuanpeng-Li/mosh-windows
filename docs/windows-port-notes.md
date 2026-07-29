@@ -199,6 +199,69 @@ restoring the mode wedges the user's shell — worse than the termios equivalent
 
 ---
 
+A console input handle is not a readiness signal
+------------------------------------------------
+
+`WaitForMultipleObjects` reports a console input handle as signalled when an
+input *record* is queued. A read of that handle -- `ReadFile`, under
+`ENABLE_VIRTUAL_TERMINAL_INPUT` -- returns only records the console translates
+into bytes. Those two sets are not the same, so the handle says "ready" and the
+read then blocks.
+
+It is not a rare race. A console queues a `FOCUS_EVENT` when it gains focus, so
+the *first* iteration after startup goes: wait returns, read blocks, forever.
+Symptom, from an early build:
+
+```
+select: 1 sockets, 1 handles (no pipe), waitset 3, wait 0 ms
+select:   handle[0]=...0160 type=2 is_pipe=0     <- FILE_TYPE_CHAR, the console
+select: wait returned 2                          <- console signalled
+select: ready=1
+<nothing, ever again>
+```
+
+The client had not sent a single datagram, because `network->tick()` sits after
+the input handling in the loop and was never reached.
+
+Records that make the handle signalled but produce no bytes: `FOCUS_EVENT`,
+`MENU_EVENT`, `WINDOW_BUFFER_SIZE_EVENT`, key-up events, mouse events when the
+application has not asked for mouse reporting, and key-down events for a bare
+modifier -- pressing Shift alone hangs a loop that treats key-down as readable.
+Predicting the rest means reimplementing conhost's key-to-VT table.
+
+So the read moves to a thread, where blocking costs nothing, and the loop waits
+on an event set only when bytes are actually in hand. See
+`src/util/console_win32.cc`.
+
+Second consequence: `ReadFile` discards `WINDOW_BUFFER_SIZE_EVENT` on its way
+to finding characters, so a resize is invisible to the reader. There is no
+SIGWINCH to fall back on. The window size is therefore sampled by a second
+thread, which also catches the resizes no record reports -- a font change
+resizes the terminal without one.
+
+---
+
+`ssh -tt` plus a remote command runs nothing
+--------------------------------------------
+
+Windows OpenSSH, asked for both a pty and a command, starts a pseudoconsole and
+never runs the command. Measured with a command that could hardly be simpler:
+
+```
+$ ssh -tt lyp@windows-box -- "Write-Output 'probe-ok'"
+^[[?9001h^[[?1004h^[[?25l^[[?9001l^[[?1004l^[[2J^[[m^[[H^[]0;C:\WINDOWS\system32\conhost.exe^G^[[?25h
+Connection to windows-box closed.
+```
+
+No `probe-ok`, no error, exit status 0. The same command without `-tt` works.
+
+mosh's launcher passes `-tt` by default, so this is exactly why a stock `mosh`
+finds no `MOSH CONNECT` line from a Windows server. `scripts/mosh.pl` here
+retries once without the pty when the first attempt yields nothing; upstream
+users need `--no-ssh-pty`.
+
+---
+
 Build notes
 -----------
 

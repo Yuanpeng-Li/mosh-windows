@@ -5,14 +5,18 @@ mosh for Windows
 
 [Mosh](https://mosh.org) is a remote terminal that survives sleep, roaming and
 packet loss, and echoes your typing locally so a laggy link still feels
-responsive. It has never had a native Windows build. This fork is porting it.
+responsive. It has never had a native Windows build. This fork is one.
 
-Two halves, at very different stages:
+Both directions work:
 
 | | |
 |---|---|
-| **Connecting out** — `mosh user@host` from Windows to a Linux/macOS server | **works today**, see below |
-| **Connecting in** — `mosh` *into* Windows and get a PowerShell session | in progress; nothing like it exists yet |
+| **Out** — `mosh user@host` from Windows to a Linux or macOS server | works |
+| **In** — `mosh user@windows-box` from anywhere, and get a PowerShell session | works, and is the part nobody had done |
+
+Built from mosh's own C++ source, so the terminal emulator, the state-synchronisation
+protocol and the prediction engine are upstream's, not a reimplementation. It
+interoperates with stock mosh 1.4.0 in both directions.
 
 ---
 
@@ -25,9 +29,9 @@ Install
 irm https://raw.githubusercontent.com/Yuanpeng-Li/mosh-windows/windows/scripts/install.ps1 | iex
 ```
 
-Installs into `%LOCALAPPDATA%\Programs\mosh`, adds that one directory to your
-**user** PATH, and downloads a `mosh-client.exe`. No admin, nothing written
-anywhere else.
+Installs `mosh.exe`, `mosh.ps1`, `mosh.cmd`, `mosh-client.exe` and
+`mosh-server.exe` into `%LOCALAPPDATA%\Programs\mosh` and adds that one
+directory to your **user** PATH. No admin, nothing written anywhere else.
 
 Then open a **new** terminal:
 
@@ -39,27 +43,30 @@ mosh user@host
 
 ```powershell
 winget install YuanpengLi.MoshWindows
-mosh --setup          # fetches mosh-client.exe on first use
 ```
-
-> The winget package contains the launcher only. It does not bundle
-> `mosh-client.exe`, because that binary belongs to another project
-> ([MoshCatty](https://github.com/binaricat/MoshCatty), GPLv3) and
-> redistributing it would put the obligation to supply matching source on us.
-> `mosh --setup` downloads it from its own release and checks it against a
-> pinned SHA-256.
 
 ### By hand
 
-Take `mosh.exe` and `mosh.ps1` out of the
-[release archive](https://github.com/Yuanpeng-Li/mosh-windows/releases/latest),
-put them in a directory on your PATH, and run `mosh --setup`.
+Unpack the
+[release archive](https://github.com/Yuanpeng-Li/mosh-windows/releases/latest)
+into a directory on your PATH.
 
 `mosh.exe` is a small shim that finds `mosh.ps1` beside it and runs it under
 PowerShell; it exists because a `.ps1` cannot be put on PATH and invoked as a
-command. From a source checkout without a compiler, `mosh.cmd` does the same
-job, with the caveat that batch cannot quote an argument containing a space for
-PowerShell's parser.
+command, and because PowerShell's `-File` splits an argument like
+`--client=C:\path` at the colon. From a source checkout without a compiler,
+`mosh.cmd` does the same job, with the caveat that batch cannot quote an
+argument containing a space for PowerShell's parser.
+
+### Check it works
+
+```powershell
+mosh --local localhost
+```
+
+That starts a server and a client on this machine, with no ssh in between, and
+drops you in a PowerShell session. If that works, the binaries are fine and
+anything else is network or ssh.
 
 ### Uninstall
 
@@ -69,8 +76,8 @@ mosh-uninstall
 
 ---
 
-Use
----
+Connecting out
+--------------
 
 Exactly as on Linux and macOS — the options are the same ones, spelled the
 same way:
@@ -88,20 +95,15 @@ Windows-only additions:
 
 ```powershell
 mosh --locale=en_US.UTF-8 user@host  # Windows has no LANG; C.UTF-8 by default
-mosh --setup                          # download and verify a mosh-client
 ```
 
-Two differences from upstream, both reported by `--help`:
+One difference from upstream, reported by `--help`:
+`--experimental-remote-ip=proxy` is refused. It works by re-invoking the
+launcher as an ssh `ProxyCommand`, and Win32 OpenSSH runs `ProxyCommand`
+through `cmd.exe`, whose quoting is not `sh`'s. The default here is `remote`,
+which asks the server for its address via `$SSH_CONNECTION`.
 
-- `--experimental-remote-ip=proxy` is refused. It works by re-invoking the
-  launcher as an ssh `ProxyCommand`, and Win32 OpenSSH runs `ProxyCommand`
-  through `cmd.exe`, whose quoting is not `sh`'s. The default here is `remote`,
-  which asks the server for its address via `$SSH_CONNECTION`.
-- `--local` needs a native `mosh-server`, which does not exist yet.
-
-### On the server
-
-Just mosh, from your distribution — nothing from this project:
+The far end needs mosh from its distribution — nothing from this project:
 
 ```sh
 apt install mosh        # Debian, Ubuntu
@@ -109,8 +111,7 @@ dnf install mosh        # Fedora, RHEL
 brew install mosh       # macOS
 ```
 
-The server needs inbound **UDP 60000–61000** open. Most VPS firewalls block it
-by default:
+and inbound **UDP 60000–61000** open. Most VPS firewalls block it by default:
 
 ```sh
 sudo ufw allow 60000:61000/udp
@@ -118,59 +119,112 @@ sudo ufw allow 60000:61000/udp
 
 ---
 
-Troubleshooting
----------------
+Connecting in
+-------------
 
-**`Did not find a 'MOSH CONNECT' line`**
-`mosh-server` is not on the remote PATH, or the remote locale is not UTF-8, or
-something in the remote shell's startup files printed first. Check with
-`ssh user@host mosh-server --version`, and try `--locale=en_US.UTF-8`.
+To reach this machine with `mosh user@windows-box`, three things have to be
+true on the Windows side.
 
-**`Nothing received from server on UDP port 60001`**
-ssh worked and the server started, but its UDP replies are not arriving. Almost
-always a firewall between you and the host. Note the port range, not just one
-port — mosh hops ports while roaming.
+**1. mosh installed, and `mosh-server` on PATH under that name.** The installer
+does this. It matters that it is on PATH rather than behind a shortcut: the
+client asks ssh to run `mosh-server`, and a session started by sshd sees only
+PATH.
 
-**`mosh: Cannot find mosh-client`**
-Run `mosh --setup`, or point `--client` at your own build.
+**2. OpenSSH Server running.** Windows ships it as an optional feature:
 
-**Chinese, Japanese or emoji are misaligned**
-Client and server must agree on how wide each character is. If they disagree,
-everything after the first wide character shifts. Please
-[open an issue](https://github.com/Yuanpeng-Li/mosh-windows/issues) with the
-exact text — this is the failure mode the native client is being built to fix.
+```powershell
+Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+Start-Service sshd
+Set-Service sshd -StartupType Automatic
+```
 
-**The prompt redraws oddly, or local echo never engages**
-Try `mosh --predict=never user@host`. If that fixes it, the prediction engine is
-disagreeing with your shell's redraw behaviour; an issue with your shell and
-prompt would be useful.
+**3. A firewall rule for `mosh-server.exe`.** Once, in an elevated PowerShell:
+
+```powershell
+New-NetFirewallRule -DisplayName 'mosh-server (UDP)' `
+  -Direction Inbound -Action Allow -Protocol UDP `
+  -Program "$env:LOCALAPPDATA\Programs\mosh\mosh-server.exe" -Profile Any
+```
+
+Per-program rather than per-port on purpose: mosh picks a port in 60000–61000
+and may change it while roaming, so a rule pinned to one port breaks the moment
+it does. Undo with
+`Remove-NetFirewallRule -DisplayName 'mosh-server (UDP)'`.
+
+Then, from any machine with mosh:
+
+```sh
+mosh lyp@192.168.1.10
+```
+
+You get PowerShell 7 if `pwsh.exe` is installed, Windows PowerShell otherwise,
+and `%ComSpec%` failing both. Override it the usual way:
+
+```sh
+mosh lyp@192.168.1.10 -- cmd.exe
+```
+
+The session survives the ssh connection closing, sleep, and changing networks,
+which is the entire point.
+
+### If your client is old mosh
+
+Nothing to do — the protocol is unchanged and stock mosh 1.4.0 connects fine.
+One thing is handled for you: Windows OpenSSH runs *nothing at all* when a
+remote command and a pty are both requested, so mosh's usual `ssh -tt` yields
+an empty pseudoconsole and no `MOSH CONNECT` line. The launcher in this fork
+notices and retries without the pty. A stock `mosh` from your distribution does
+not, so pass `--no-ssh-pty`:
+
+```sh
+mosh --no-ssh-pty lyp@192.168.1.10
+```
 
 ---
 
-Status
-------
+Troubleshooting
+---------------
 
-**Working now.** `mosh user@host` from Windows, with the full upstream
-command-line interface. Verified end to end against a Linux host: ssh
-bootstrap, session key handoff, live shell with colour and title.
+**`Did not find mosh server startup message`**
+`mosh-server` is not on the remote PATH, or the remote locale is not UTF-8, or
+something in the remote shell's startup files printed first. Check with
+`ssh user@host mosh-server --version`, and try `--locale=en_US.UTF-8`. Against a
+Windows server from a stock client, add `--no-ssh-pty` (see above).
 
-The launcher is this project's code. The client it drives is currently
-[MoshCatty](https://github.com/binaricat/MoshCatty), an independent Rust
-reimplementation of the mosh protocol. It is not a port of mosh's own terminal
-emulator, so its rendering may differ from real mosh in corners — wide
-characters and heavy TUI applications are worth watching.
+**`Nothing received from server on UDP port 60001`**
+ssh worked and the server started, but its UDP replies are not arriving. Almost
+always a firewall between you and the host. Note the port *range*, not just one
+port — mosh hops ports while roaming. On a Windows server, check the rule is
+per-program and points at the `mosh-server.exe` that is actually running.
 
-**Being built.**
+**`mosh: Cannot find mosh-client`**
+Point `--client` at your build, or set `MOSH_CLIENT`. `mosh --setup` will also
+download one.
 
-- `mosh-client.exe` from mosh's actual C++ source, so behaviour matches upstream
-  exactly. The launcher already prefers a `mosh-client.exe` sitting next to it,
-  so this will be a drop-in swap with no configuration change.
-- `mosh-server.exe`, hosting PowerShell through the Windows Pseudo Console. This
-  is the part nobody has done. See
-  [docs/windows-port-notes.md](docs/windows-port-notes.md) for what has been
-  measured so far.
+**`this console cannot interpret terminal sequences`**
+The client needs a console that understands VT sequences, which means Windows
+10 1809 or newer. Windows Terminal, the modern console host and VS Code's
+terminal all qualify.
 
-**Build it yourself.**
+**Chinese, Japanese or emoji are misaligned**
+Client and server must agree on how wide each character is. This port carries
+its own width table, generated from glibc's `wcwidth`, precisely so that a
+Windows client and a Linux server agree. If you still see a shift, please
+[open an issue](https://github.com/Yuanpeng-Li/mosh-windows/issues) with the
+exact text.
+
+**The prompt redraws oddly, or local echo never engages**
+Try `mosh --predict=never user@host`. If that fixes it, the prediction engine
+is disagreeing with your shell's redraw behaviour; an issue with your shell and
+prompt would be useful.
+
+**Ctrl-Z does nothing**
+Correct. Windows has no job control, so there is nothing to suspend to.
+
+---
+
+Build it yourself
+-----------------
 
 ```powershell
 cmake -S . -B build -G Ninja `
@@ -179,9 +233,16 @@ cmake -S . -B build -G Ninja `
 cmake --build build
 ```
 
-The CMake build also works on Linux, which is how it is validated without a
-Windows machine. The autotools build is untouched and remains the way to build
-on Unix.
+Needs MSVC (VS Build Tools 2022), CMake, Ninja and vcpkg; `vcpkg.json` pins the
+dependencies. The same CMake build works on Linux and macOS, which is how the
+port is kept honest — every change is built and tested on both, and
+`ctest` there runs the whole `make check` suite, tmux screen captures included.
+The autotools build is untouched and remains the way to build on Unix.
+`docs/cmake-build.md` lists the options and what each corresponds to in
+`configure`.
+
+`docs/windows-port-notes.md` records the Windows behaviours this port had to be
+built around, each one measured rather than taken from documentation.
 
 ---
 
@@ -211,8 +272,8 @@ Alternatives
 
 If you only want a mosh **client** on Windows and do not care whose:
 
-- [MoshCatty](https://github.com/binaricat/MoshCatty) — the client this project
-  currently uses. Also usable directly.
+- [MoshCatty](https://github.com/binaricat/MoshCatty) — an independent Rust
+  reimplementation of the mosh protocol.
 - [Netcatty](https://github.com/binaricat/Netcatty) — a GUI SSH client with mosh
   built in.
 - Chrome Secure Shell, Termius, and Blink on iOS all ship mosh clients.
