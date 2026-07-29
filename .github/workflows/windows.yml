@@ -1,0 +1,127 @@
+# The CI this port did not have.
+#
+# Upstream declines Windows patches on the grounds that there is no CI to keep
+# them working, and that reasoning is sound: without this, the only thing
+# standing between a change and a broken Windows build is somebody remembering
+# to check by hand. Everything below runs on every push.
+#
+# It also covers the CMake build on Linux and macOS, which the autotools CI in
+# ci.yml does not touch at all -- and CMake is the only build system the
+# Windows port has, so an unverified CMake build is an unverified port.
+
+name: windows
+
+on: [push, pull_request]
+
+jobs:
+  msvc:
+    name: windows / msvc
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    # vcpkg builds OpenSSL and protobuf from source, which is slow enough to
+    # matter. These two steps point vcpkg's binary cache at the Actions cache;
+    # a warm run reuses the artefacts instead of rebuilding them.
+    - uses: actions/github-script@v7
+      with:
+        script: |
+          core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+          core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+    - name: enable vcpkg binary caching
+      run: echo "VCPKG_BINARY_SOURCES=clear;x-gha,readwrite" >> $env:GITHUB_ENV
+
+    # The Visual Studio generator rather than Ninja, so this needs no vcvars
+    # step and no third-party action to provide one. It is a multi-config
+    # generator, hence --config and -C below.
+    - name: configure
+      run: >
+        cmake -S . -B build -A x64
+        -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+        -DVCPKG_TARGET_TRIPLET=x64-windows-static-md
+        -DBUILD_TESTING=ON
+
+    - name: build
+      run: cmake --build build --config RelWithDebInfo
+
+    # --no-tests=error: a configuration that registers nothing must fail rather
+    # than report success, which is how a test suite quietly stops existing.
+    - name: unit tests
+      run: ctest --test-dir build -C RelWithDebInfo --output-on-failure --no-tests=error
+
+    - name: the three binaries run
+      run: |
+        $ErrorActionPreference = 'Stop'
+        foreach ($name in 'mosh-client.exe', 'mosh-server.exe', 'mosh.exe') {
+          $exe = Get-ChildItem -Path build -Recurse -Filter $name |
+                 Select-Object -First 1 -ExpandProperty FullName
+          if (-not $exe) { throw "$name was not built" }
+          $v = & $exe --version 2>&1 | Select-Object -First 1
+          Write-Host "$name -> $v"
+          if ($LASTEXITCODE -ne 0) { throw "$name --version exited $LASTEXITCODE" }
+        }
+
+    # The part the unit tests cannot reach. All six of them are pure
+    # computation; nothing in the suite touches win32detach, ptyhost_win32,
+    # socketio_win32 or the ConPTY. Starting a server does: it respawns itself
+    # detached, creates a pseudoconsole, launches a shell in it, binds a UDP
+    # socket, and relays the handshake back through a pipe. If any of that is
+    # broken, this step says so.
+    - name: a server starts, hosts a shell and detaches
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $exe = Get-ChildItem -Path build -Recurse -Filter mosh-server.exe |
+               Select-Object -First 1 -ExpandProperty FullName
+        $out = & $exe new -i 127.0.0.1 2>&1 | Out-String
+        if ($out -notmatch 'MOSH CONNECT (\d+) ([A-Za-z0-9/+]{22})') {
+          Write-Host "mosh-server printed:"
+          Write-Host $out
+          throw "no usable MOSH CONNECT line"
+        }
+        $port = $Matches[1]
+        Write-Host "server came up on UDP $port"
+        Start-Sleep -Seconds 2
+        $srv = @(Get-Process mosh-server -ErrorAction SilentlyContinue)
+        if ($srv.Count -lt 1) { throw "the server did not survive its parent -- detach is broken" }
+        Write-Host "$($srv.Count) detached server(s) still running, as intended"
+        $srv | Stop-Process -Force
+
+  cmake-posix:
+    name: cmake / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: dependencies (linux)
+      if: startsWith(matrix.os, 'ubuntu')
+      run: sudo apt update && sudo apt install -y cmake ninja-build protobuf-compiler libprotobuf-dev libutempter-dev libncurses-dev tmux
+
+    - name: dependencies (macos)
+      if: startsWith(matrix.os, 'macos')
+      run: brew install cmake ninja protobuf tmux
+
+    # ctest runs local.test and the 26 tmux screen-capture tests, and those
+    # skip -- reporting success -- without tmux or a UTF-8 locale. Assert both
+    # here, so a suite that has quietly stopped testing anything is a failure
+    # rather than a green tick.
+    - name: preconditions for the display tests
+      run: |
+        tmux -V
+        locale -a | grep -qi 'utf' || { echo "no UTF-8 locale available"; exit 1; }
+
+    - name: configure
+      run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+    - name: build
+      run: cmake --build build
+
+    - name: test
+      env:
+        LC_ALL: ${{ startsWith(matrix.os, 'ubuntu') && 'C.UTF-8' || 'en_US.UTF-8' }}
+      run: ctest --test-dir build --output-on-failure --no-tests=error
