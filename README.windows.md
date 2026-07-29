@@ -154,14 +154,14 @@ it does. Undo with
 Then, from any machine with mosh:
 
 ```sh
-mosh lyp@192.168.1.10
+mosh user@192.168.1.10
 ```
 
 You get PowerShell 7 if `pwsh.exe` is installed, Windows PowerShell otherwise,
 and `%ComSpec%` failing both. Override it the usual way:
 
 ```sh
-mosh lyp@192.168.1.10 -- cmd.exe
+mosh user@192.168.1.10 -- cmd.exe
 ```
 
 The session survives the ssh connection closing, sleep, and changing networks,
@@ -190,7 +190,7 @@ Then `mosh user@windows-box` works with no flags. `rm $(command -v mosh)` undoes
 it. Without it, pass `--no-ssh-pty` every time:
 
 ```sh
-mosh --no-ssh-pty lyp@192.168.1.10
+mosh --no-ssh-pty user@192.168.1.10
 ```
 
 The symptom to recognise, if you skip this: mosh prints a perfectly clean
