@@ -161,9 +161,10 @@ static void test_known_bad( void )
 
 /* ------------------------------------------------------ vs the C library -- */
 
-/* Set by test_against_libc before any comparison runs; see
-   libc_accepts_extended_forms below for what it means. */
+/* Both set by test_against_libc before any comparison runs; see the probes
+   further down for what they mean. */
 static bool libc_extended = true;
+static bool libc_rejects_early = false;
 
 static bool utf8_locale( void )
 {
@@ -204,6 +205,21 @@ static void compare_with_libc( const char* bytes, size_t n )
   const bool mine_short = ( mine_ret == Util::UTF8_INCOMPLETE );
   const bool their_short = ( their_ret == (size_t)-2 );
 
+  /* The other axis the dialects differ on: when a prefix that can never become
+     a valid character is rejected. Unicode 6.0 section 3.9 recommends
+     rejecting the "maximal subpart" as early as possible -- Apple's libc does,
+     and calls E0 80 invalid at the second byte. glibc assembles the whole
+     character first and calls it incomplete, and utf8.cc matches glibc
+     deliberately, because two peers that disagree emit a different number of
+     U+FFFDs for the same malformed input and desynchronise the screen.
+
+     So "mine incomplete, theirs invalid" on a genuine prefix is the two
+     libraries speaking their own dialects, not a defect. A complete sequence
+     still has to agree. */
+  if ( libc_rejects_early && mine_short && their_bad ) {
+    return;
+  }
+
   if ( mine_bad != their_bad || mine_short != their_short ) {
     char d[192];
     snprintf( d, sizeof d, "%s -- mine %lld, libc %lld", hex( bytes, n ).c_str(), (long long)mine_ret,
@@ -242,12 +258,25 @@ static bool libc_accepts_extended_forms( void )
   return mbrtowc( &wc, five, sizeof five - 1, &ps ) == 5;
 }
 
+/* Does this library reject a doomed prefix at the first byte that proves it,
+   rather than after assembling the character? E0 80 can only ever be an
+   overlong three-byte form. */
+static bool libc_rejects_maximal_subparts( void )
+{
+  static const char overlong_prefix[] = "\xE0\x80";
+  wchar_t wc = 0;
+  mbstate_t ps = mbstate_t();
+  return mbrtowc( &wc, overlong_prefix, 2, &ps ) == (size_t)-1;
+}
+
 static void test_against_libc( void )
 {
+  libc_rejects_early = libc_rejects_maximal_subparts();
   libc_extended = libc_accepts_extended_forms();
   const bool extended = libc_extended;
-  printf( "utf8: this C library %s the obsolete 5- and 6-byte forms\n",
-          extended ? "accepts" : "rejects" );
+  printf( "utf8: this C library %s the obsolete 5- and 6-byte forms, and rejects\n"
+          "      doomed prefixes %s\n",
+          extended ? "accepts" : "rejects", libc_rejects_early ? "early" : "after assembling" );
   /* Every one-byte and two-byte sequence: 65792 cases, which between them
      cover bare continuations, both overlong forms' lead bytes, and the
      surrogate and out-of-range lead/second-byte pairs. */

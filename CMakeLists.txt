@@ -317,7 +317,14 @@ if(MSVC)
   if(MOSH_HARDEN)
     include(CheckCXXCompilerFlag)
     set(_mosh_msvc_harden "")
-    foreach(_f /guard:cf /Qspectre /sdl)
+    # /sdl is deliberately not in this list. It promotes C4996 to an error, and
+    # this codebase calls strdup and putenv -- the POSIX spellings MSVC
+    # deprecates -- so the build fails outright. _CRT_SECURE_NO_WARNINGS does
+    # not cover it under /sdl. Worth recording that check_cxx_compiler_flag
+    # accepted /sdl happily: it compiles a trivial file with no such call, so a
+    # flag can pass the probe and still break the build. The probe answers "is
+    # this flag understood", not "does this project survive it".
+    foreach(_f /guard:cf /Qspectre)
       string(MAKE_C_IDENTIFIER "MOSH_MSVC${_f}" _cache)
       check_cxx_compiler_flag(${_f} ${_cache})
       if(${_cache})

@@ -131,6 +131,26 @@ bool is_detached( void )
 
 int spawn( void )
 {
+  /* The daemon is this same program with this same command line -- and "this
+     same program" means this image on disk, not whatever the first word of the
+     command line resolves to.
+
+     With lpApplicationName NULL, CreateProcess parses lpCommandLine for the
+     executable and searches for it; that search includes the current directory.
+     The first word here is what ssh sent, which is the bare word `mosh-server`,
+     and the working directory of a command run by sshd is the user's home. A
+     mosh-server.exe sitting there -- dropped by anything that can write to the
+     home directory -- would be started instead of this one, with this one's
+     arguments. Naming the image explicitly closes that; the command line is
+     still passed, so the daemon parses the same argv it would have. */
+  wchar_t self[MAX_PATH];
+  const DWORD self_len = GetModuleFileNameW( NULL, self, MAX_PATH );
+  if ( self_len == 0 || self_len >= MAX_PATH ) {
+    fprintf( stderr, "mosh-server: GetModuleFileName: %s\n", win_error( GetLastError() ).c_str() );
+    return -1;
+  }
+
+
   SECURITY_ATTRIBUTES sa;
   sa.nLength = sizeof sa;
   sa.lpSecurityDescriptor = NULL;
@@ -173,7 +193,6 @@ int spawn( void )
 
   SetEnvironmentVariableW( DAEMON_ENV, L"1" );
 
-  /* The daemon is this same program with this same command line. */
   std::wstring cmdline( GetCommandLineW() );
   std::vector<wchar_t> mutable_cmdline( cmdline.begin(), cmdline.end() );
   mutable_cmdline.push_back( L'\0' );
@@ -184,7 +203,7 @@ int spawn( void )
   memset( &pi, 0, sizeof pi );
   bool broke_away = true;
   BOOL ok = CreateProcessW(
-    NULL, &mutable_cmdline[0], NULL, NULL, TRUE, base_flags | CREATE_BREAKAWAY_FROM_JOB, NULL, NULL,
+    self, &mutable_cmdline[0], NULL, NULL, TRUE, base_flags | CREATE_BREAKAWAY_FROM_JOB, NULL, NULL,
     &si.StartupInfo, &pi );
   if ( !ok && GetLastError() == ERROR_ACCESS_DENIED ) {
     /* BREAKAWAY_OK is a property of the job sshd happens to create, not a
@@ -193,7 +212,7 @@ int spawn( void )
        user to discover. */
     broke_away = false;
     ok = CreateProcessW(
-      NULL, &mutable_cmdline[0], NULL, NULL, TRUE, base_flags, NULL, NULL, &si.StartupInfo, &pi );
+      self, &mutable_cmdline[0], NULL, NULL, TRUE, base_flags, NULL, NULL, &si.StartupInfo, &pi );
   }
   const DWORD spawn_error = GetLastError();
 
