@@ -41,7 +41,7 @@ Install
 
 ```powershell
 irm https://raw.githubusercontent.com/Yuanpeng-Li/mosh-windows/windows/scripts/install.ps1 -OutFile install.ps1
-notepad install.ps1        # it is 180 lines; the interesting part is what it downloads
+notepad install.ps1
 .\install.ps1
 ```
 
@@ -98,11 +98,28 @@ That starts a server and a client on this machine, with no ssh in between, and
 drops you in a PowerShell session. If that works, the binaries are fine and
 anything else is network or ssh.
 
+### Update
+
+Windows releases after v0.2.0 support `mosh update --check` and `mosh update`.
+The first command prints the installed and latest stable versions. The second
+verifies the release archive's SHA-256 and replaces the files in the current
+installation. If replacement fails, the updater restores the previous files.
+After an interrupted update, run `mosh update` again. Use `mosh -- update` to
+connect to a host literally named `update`.
+
+For v0.2.0 and earlier, install a newer ZIP or rerun the installer once after
+a release containing the updater becomes available. For a WinGet installation,
+use `winget upgrade --id YuanpengLi.MoshWindows --exact`.
+
 ### Uninstall
 
 ```powershell
 mosh-uninstall
 ```
+
+The script installer records its files and any user PATH entry it adds. When
+upgrading an older installation that has no record, uninstall preserves the
+existing directory and PATH entry.
 
 ---
 
@@ -126,6 +143,11 @@ Windows-only additions:
 ```powershell
 mosh --locale=en_US.UTF-8 user@host  # Windows has no LANG; C.UTF-8 by default
 ```
+
+When connecting to a Windows host without `sh`, the launcher starts the server
+through Windows PowerShell. This can prompt for SSH authentication a second time.
+With `--experimental-remote-ip=local`, the launcher resolves the hostname on
+the client and uses the selected numeric address for both SSH and UDP.
 
 One difference from upstream, reported by `--help`:
 `--experimental-remote-ip=proxy` is refused. It works by re-invoking the

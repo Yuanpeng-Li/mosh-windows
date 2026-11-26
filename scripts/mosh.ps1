@@ -23,6 +23,7 @@ $ProgName = 'mosh'
 
 $Usage = @"
 Usage: $ProgName [options] [--] [user@]host [command...]
+       $ProgName update [--check]   install or check for the latest Windows release
         --client=PATH        mosh client on local machine
                                 (default: "mosh-client")
         --server=COMMAND     mosh server on remote machine
@@ -174,6 +175,19 @@ $userhost     = $null
 $command      = @()
 
 $argv = @($args)
+if ($argv.Count -and $argv[0] -ceq 'update') {
+    if ($argv.Count -gt 2 -or ($argv.Count -eq 2 -and $argv[1] -cne '--check')) {
+        Die 'Usage: mosh update [--check]'
+    }
+    try {
+        & (Join-Path $PSScriptRoot 'mosh-update.ps1') -Check:($argv.Count -eq 2)
+    } catch { Die $_.Exception.Message }
+    exit 0
+}
+
+if (Test-Path -LiteralPath (Join-Path $PSScriptRoot '.mosh-update.pending')) {
+    Die 'An update is in progress or was interrupted. Retry after it finishes, or run mosh update to recover.'
+}
 
 # `pwsh -File script.ps1 --client=C:\path\to.exe` arrives split in two, as
 # "--client=C" and "\path\to.exe": PowerShell's -File argument parser treats
@@ -222,7 +236,14 @@ while ($i -lt $argv.Count) {
 
     switch -CaseSensitive ($name) {
         '--help'      { Write-Usage-And-Exit 0 }
-        '--version'   { Write-Output $VersionMessage; exit 0 }
+        '--version'   {
+            $versionFile = Join-Path $PSScriptRoot 'mosh-version.txt'
+            if (Test-Path -LiteralPath $versionFile -PathType Leaf) {
+                Write-Output ("Mosh for Windows " + (Get-Content -LiteralPath $versionFile -Raw).Trim())
+            }
+            Write-Output $VersionMessage
+            exit 0
+        }
         '--setup'     { exit (Invoke-Setup (Split-Path -Parent $PSCommandPath)) }
         '--client'    { $client   = if ($hasVal) { $val } else { Next-Value $name } }
         '--server'    { $server   = if ($hasVal) { $val } else { Next-Value $name } }
@@ -236,11 +257,11 @@ while ($i -lt $argv.Count) {
             $s = if ($hasVal) { $val } else { Next-Value $name }
             # Getopt uses shellwords() here; the common cases are plain
             # whitespace splitting with optional quoting.
-            $sshWords = [regex]::Matches($s, '"([^"]*)"|''([^'']*)''|(\S+)') | ForEach-Object {
+            $sshWords = @([regex]::Matches($s, '"([^"]*)"|''([^'']*)''|(\S+)') | ForEach-Object {
                 if ($_.Groups[1].Success) { $_.Groups[1].Value }
                 elseif ($_.Groups[2].Success) { $_.Groups[2].Value }
                 else { $_.Groups[3].Value }
-            }
+            })
             if (-not $sshWords) { Die-Usage "--ssh needs a command" }
         }
         '--experimental-remote-ip' { $useRemoteIp = if ($hasVal) { $val } else { Next-Value $name } }
@@ -261,7 +282,8 @@ while ($i -lt $argv.Count) {
     $i++
 }
 
-# Everything after the host is the remote command.
+# Accept the documented optional separator after the host.
+if ($i -lt $argv.Count -and $argv[$i] -eq '--') { $i++ }
 if ($i -lt $argv.Count) { $command = @($argv[$i..($argv.Count - 1)]) }
 
 if (-not $userhost) { Write-Usage-And-Exit 1 }
@@ -297,6 +319,31 @@ OpenSSH runs through cmd.exe with different quoting rules. Use the default
 if ($useRemoteIp -notin @('local', 'remote')) { Die-Usage "Unknown parameter $useRemoteIp" }
 
 
+
+function Resolve-MoshAddress([string] $name, [string] $family) {
+    try {
+        $addresses = @([Net.Dns]::GetHostAddresses($name))
+    } catch { Die "Could not resolve ${name}: $_" }
+    $v4 = @($addresses | Where-Object AddressFamily -eq InterNetwork)
+    $v6 = @($addresses | Where-Object AddressFamily -eq InterNetworkV6)
+    switch ($family) {
+        'inet'         { $addresses = $v4 }
+        'inet6'        { $addresses = $v6 }
+        'prefer-inet'  { $addresses = $v4 + $v6 }
+        'prefer-inet6' { $addresses = $v6 + $v4 }
+        'auto' {
+            if ($v4.Count -and $v6.Count) { Die "$name has both IPv4 and IPv6 addresses; select --family" }
+        }
+    }
+    if (-not $addresses.Count) { Die "No $family address for $name" }
+    $addresses[0].ToString()
+}
+
+$localIp = $null
+if (-not $localhost -and $useRemoteIp -eq 'local') {
+    $hostName = $userhost -replace '^.*@', ''
+    $localIp = Resolve-MoshAddress $hostName $family
+}
 
 # ------------------------------------------------------- the local binaries --
 
@@ -381,89 +428,134 @@ if ($command.Count -gt 0) { $serverArgs += @('--') + $command }
 # Quoted for the remote POSIX shell -- not for PowerShell and not for cmd.
 function ConvertTo-ShQuoted([string[]] $words) {
     ($words | ForEach-Object {
-        if ($_ -match '^[A-Za-z0-9_./:@%+=-]+$') { $_ }
+        if ($_ -match '\A[A-Za-z0-9_./:@%+=-]+\z') { $_ }
         else { "'" + ($_ -replace "'", "'\''") + "'" }
     }) -join ' '
 }
 
-$remoteCmd = "$server " + (ConvertTo-ShQuoted $serverArgs)
-
-if ($useRemoteIp -eq 'remote' -and -not $localhost) {
-    # Ask the remote end which address ssh actually reached it on, and connect
-    # the UDP session to that. Handing the client whatever the user typed
-    # breaks for an ssh_config alias, which is not a name DNS can resolve, and
-    # on a multi-homed host is not necessarily the address mosh-server bound
-    # to. The login shell may not be POSIX, hence the explicit sh -c.
-    $probe = '[ -n "$SSH_CONNECTION" ] && printf "\nMOSH SSH_CONNECTION %s\n" "$SSH_CONNECTION"'
-    $remoteCmd = 'sh -c ' + (ConvertTo-ShQuoted @($probe)) + ' ; ' + $remoteCmd
+# Quote for the Windows native argv parser, including runs of backslashes
+# before embedded quotes and before the closing quote.
+function ConvertTo-NativeQuoted([string] $word) {
+    '"' + (($word -replace '(\\*)"', '$1$1\"') -replace '(\\+)\z', '$1$1') + '"'
 }
 
-# ------------------------------------------------------------------- ssh -----
-
-$sshArgs = @()
-if ($sshWords.Count -gt 1) { $sshArgs += $sshWords[1..($sshWords.Count - 1)] }
-if ($useRemoteIp -eq 'remote') {
-    if ($family -eq 'inet') { $sshArgs += '-4' } elseif ($family -eq 'inet6') { $sshArgs += '-6' }
+function Invoke-Startup([string] $exe, [string[]] $words, [string] $inputScript) {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $exe
+    $psi.Arguments = ($words | ForEach-Object { ConvertTo-NativeQuoted $_ }) -join ' '
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardInput = [bool]$inputScript
+    $proc = New-Object System.Diagnostics.Process
+    $proc.StartInfo = $psi
+    try {
+        [void]$proc.Start()
+        $output = $proc.StandardOutput.ReadToEndAsync()
+        if ($inputScript) {
+            # A remote without sh may exit before we finish writing.
+            try {
+                $bytes = [Text.Encoding]::UTF8.GetBytes($inputScript)
+                $proc.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+            } catch [IO.IOException] {
+            } finally {
+                # Windows may report a broken pipe only when Close flushes
+                # the last bytes, after the interpreter has already exited.
+                try { $proc.StandardInput.BaseStream.Close() } catch [IO.IOException] {}
+            }
+        }
+        $proc.WaitForExit()
+        return @{ Output = $output.GetAwaiter().GetResult(); Status = $proc.ExitCode }
+    } catch { Die "Could not run ${exe}: $_" }
+    finally { $proc.Dispose() }
 }
 
-# ssh reads stdin and forwards it, which is what makes password and 2FA
-# prompts work -- so normally leave it alone. But with no console (a scheduled
-# task, a detached process) stdin is not a usable handle and ssh blocks on it
-# forever. Detect that and pass -n.
-$hasConsole = $true
-try { $null = [System.Console]::KeyAvailable } catch { $hasConsole = $false }
-if (-not $hasConsole) { $sshArgs += '-n' }
-
-$sshArgs += @($userhost, '--', $remoteCmd)
-
-# Read the startup line over a pipe, not out of a file.
-#
-# The line carries the session key, and mosh.pl has never let it touch a disk:
-# it forks with open($pipe, "-|"). Collecting it through `cmd /c ... > $tmp`
-# put a base64 AES-128 key in %TEMP%, and Remove-Item unlinks rather than
-# overwrites, so it stayed recoverable afterwards. A local mosh session is
-# exactly what an attacker who can read %TEMP% would want.
-#
-# Going direct also removes cmd.exe from the picture, which was a second
-# problem: the quoting below is CommandLineToArgvW's convention -- backslash
-# before quote -- and that is what CreateProcess and ssh.exe expect, but not
-# what cmd.exe does. cmd has no backslash escape, toggles quote state on every
-# quote, and treats & | < > ^ ( as metacharacters outside quotes. A host or
-# command containing one was mis-parsed before reaching ssh.
-#
-# stdout is redirected; stdin and stderr are inherited, so ssh keeps the
-# console for password and passphrase prompts and mosh-server's banner still
-# reaches the user.
-function ConvertTo-CmdQuoted([string] $s) { '"' + ($s -replace '"', '\"') + '"' }
+# ssh -n and StdinNull can discard even redirected input. When an
+# interpreter exits cleanly without printing the first-line marker, retry
+# with the script in the command. Only fixed syntax and encoded bytes are
+# exposed to the unknown login shell.
+function Invoke-SshBootstrap([string] $interpreter, [string] $scriptText) {
+    $result = Invoke-Startup $sshExe.Source ($sshArgs + $interpreter) $scriptText
+    if ($result.Status -eq 0 -and [string]::IsNullOrWhiteSpace($result.Output)) {
+        if ($interpreter -eq 'sh -s') {
+            $octal = ([Text.Encoding]::UTF8.GetBytes($scriptText) | ForEach-Object {
+                '\0' + [Convert]::ToString($_, 8).PadLeft(3, '0')
+            }) -join ''
+            $inline = 'sh -c "printf ''%b'' ''' + $octal + ''' | sh"'
+        } else {
+            $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($scriptText))
+            $inline = "powershell.exe -NoProfile -NonInteractive -EncodedCommand $encoded"
+        }
+        $result = Invoke-Startup $sshExe.Source ($sshArgs + $inline) ''
+    }
+    return $result
+}
 
 if ($localhost) {
-    # No ssh at all: start the server here and read its startup line directly.
-    # Useful for checking an install without a second machine.
-    $exePath = Find-MoshServer $server
-    $exeArgs = $serverArgs
+    $startup = Invoke-Startup (Find-MoshServer $server) $serverArgs ''
 } else {
-    $exePath = $sshExe.Source
-    $exeArgs = $sshArgs
+    $sshArgs = @()
+    if ($sshWords.Count -gt 1) { $sshArgs += $sshWords[1..($sshWords.Count - 1)] }
+    if ($family -eq 'inet') { $sshArgs += '-4' } elseif ($family -eq 'inet6') { $sshArgs += '-6' }
+    if ($localIp) {
+        # Keep the original SSH alias, identity and known_hosts configuration
+        # while making SSH and UDP reach the same selected address.
+        $sshArgs += @('-o', "HostName=$localIp")
+    }
+    $sshArgs += @('-T', '--', $userhost)
+
+    # The login shell sees only a fixed command. User arguments are parsed by
+    # the explicitly selected interpreter, including when sshd runs cmd.exe.
+    $bootstrap = "echo MOSH_POSIX_BOOTSTRAP_V1`n"
+    if ($useRemoteIp -eq 'remote') {
+        $bootstrap += 'printf "MOSH SSH_CONNECTION %s\n" "$SSH_CONNECTION"' + "`n"
+    }
+    $bootstrap += "$server " + (ConvertTo-ShQuoted $serverArgs) + "`n"
+    $startup = Invoke-SshBootstrap 'sh -s' $bootstrap
+    if ($startup.Status -ne 0 -and $startup.Status -ne 255 -and
+        $startup.Output -notmatch '(?m)^MOSH_POSIX_BOOTSTRAP_V1\r?$' -and
+        $startup.Output -notmatch '(?m)^MOSH CONNECT ') {
+        # A stock Windows server has no sh. Once a bootstrap actually ran,
+        # never retry it: a command may have side effects even if it fails.
+        [Console]::Error.WriteLine('mosh: trying Windows PowerShell on the remote host (SSH may authenticate again)')
+        $winScript = 'Write-Output MOSH_WINDOWS_BOOTSTRAP_V1' + "`n" + '$ErrorActionPreference = "Stop"' + "`n"
+        if ($useRemoteIp -eq 'remote') {
+            $winScript += 'Write-Output ("MOSH SSH_CONNECTION " + $env:SSH_CONNECTION)' + "`n"
+        }
+        # Send data on stdin so a long command never has to fit through
+        # cmd.exe's command line. ASCII transport also works with the
+        # legacy input code pages of Windows PowerShell 5.1.
+        $request = @{
+            Server = $server
+            Arguments = ($serverArgs | ForEach-Object { ConvertTo-NativeQuoted $_ }) -join ' '
+        } | ConvertTo-Json -Compress
+        $data = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($request))
+        $winScript += "`$request = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$data')) | ConvertFrom-Json" + "`n"
+        $winScript += @'
+$si = New-Object Diagnostics.ProcessStartInfo
+$si.FileName = $request.Server
+$si.Arguments = $request.Arguments
+if (!(Test-Path -LiteralPath $si.FileName -PathType Leaf) -and $request.Server -match '^\s*(?:"([^"]+)"|(\S+))\s+(.+)$') {
+    $si.FileName = $Matches[1] + $Matches[2]
+    $si.Arguments = $Matches[3] + ' ' + $si.Arguments
 }
 
-$psi = New-Object System.Diagnostics.ProcessStartInfo
-$psi.FileName = $exePath
-$psi.Arguments = ($exeArgs | ForEach-Object { ConvertTo-CmdQuoted $_ }) -join ' '
-$psi.UseShellExecute = $false
-$psi.RedirectStandardOutput = $true
-$psi.RedirectStandardError = $false
-$psi.RedirectStandardInput = $false
+$si.UseShellExecute = $false
+try {
+    $child = [Diagnostics.Process]::Start($si)
+    $child.WaitForExit()
+    exit $child.ExitCode
+} catch {
+    [Console]::Error.WriteLine($_)
+    exit 1
+}
 
-$proc = New-Object System.Diagnostics.Process
-$proc.StartInfo = $psi
-[void]$proc.Start()
-# Read to end before waiting: a full pipe would block the child for ever.
-$stdout = $proc.StandardOutput.ReadToEnd()
-$proc.WaitForExit()
-$sshExit = $proc.ExitCode
-$proc.Dispose()
+'@
+        $startup = Invoke-SshBootstrap 'powershell.exe -NoLogo -NoProfile -NonInteractive -Command -' ($winScript + "`n")
+    }
+}
 
-$lines = @($stdout -split "`r?`n")
+$sshExit = $startup.Status
+$lines = @($startup.Output -split "`r?`n")
 
 # ----------------------------------------------------------------- parsing --
 
@@ -471,6 +563,7 @@ $ip = $null; $port = $null; $key = $null
 if ($localhost) { $ip = '127.0.0.1' }
 foreach ($line in $lines) {
     $l = ([string]$line).TrimEnd()
+    if ($l -cin @('MOSH_POSIX_BOOTSTRAP_V1', 'MOSH_WINDOWS_BOOTSTRAP_V1')) { continue }
     if ($l -match '^MOSH IP (\S+)\s*$') { $ip = $Matches[1]; continue }
     # SSH_CONNECTION is "<client ip> <client port> <server ip> <server port>",
     # so with the two leading words the server address is field 4.
@@ -497,7 +590,8 @@ Usually one of:
 "@
 }
 
-if (-not $ip) { $ip = $userhost -replace '^.*@', '' }
+if ($localIp) { $ip = $localIp }
+if (-not $ip) { $ip = Resolve-MoshAddress ($userhost -replace '^.*@', '') $family }
 
 # ---------------------------------------------------------------- connect ---
 # The key goes through the environment and never the command line: command

@@ -53,8 +53,7 @@ class Select;
  * that point.
  *
  * On Windows there is no fork. The pseudoconsole and the child are created
- * together, in one call, and there is no window in which a half-built child
- * exists, so there is nothing to hold back and release() does nothing.
+ * together. The primary thread stays suspended until the client connects.
  *
  * A single start()/adopt() pair that lied about this would have to invent a
  * child-setup callback that runs after fork on one platform and never runs on
@@ -75,10 +74,6 @@ public:
   /* Bytes are waiting from the command. */
   bool readable( const Select& sel ) const;
 
-  /* The command has exited. Always false on POSIX, where the same event
-     arrives as end of file on the master and is handled there. */
-  bool exited( const Select& sel ) const;
-
   /* Returns the byte count, 0 at end of input, or -1 on error. The caller
      treats an error the same as end of input: with the pty slave closed, a
      read of the master fails with EIO rather than returning 0 (mosh#264). */
@@ -91,14 +86,16 @@ public:
   bool resize( int width, int height );
 
   /* Lets the command start its login session, now that a client has really
-     connected. Does nothing where the command was never held back. */
+     connected. */
   void release( void );
 
   void close( void );
 
 #if defined( _WIN32 )
-  /* Creates a pseudoconsole of the given size and starts args on it.
-     Returns false having reported why. */
+  /* Begins the final output flush if the process has exited. */
+  bool finish_if_exited( const Select& sel );
+
+  /* Creates the pseudoconsole and its suspended child. */
   bool start( const std::vector<std::string>& args, int width, int height );
 #else
   /* Takes ownership of a forkpty() master and the release pipe. */

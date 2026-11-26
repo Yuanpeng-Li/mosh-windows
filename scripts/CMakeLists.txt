@@ -13,13 +13,15 @@ if(WIN32)
   target_link_libraries(mosh PRIVATE mosh_common)
   install(TARGETS mosh RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
   # mosh.exe looks for mosh.ps1 beside itself, so the two travel together.
-  install(FILES mosh.ps1 mosh.cmd DESTINATION ${CMAKE_INSTALL_BINDIR})
+  install(FILES mosh.ps1 mosh-update.ps1 mosh.cmd DESTINATION ${CMAKE_INSTALL_BINDIR})
 
   # Keep them beside the binaries in the build tree as well, so a build tree
   # can be run from without installing.
   add_custom_command(TARGET mosh POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/mosh.ps1" "$<TARGET_FILE_DIR:mosh>/mosh.ps1"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/mosh-update.ps1" "$<TARGET_FILE_DIR:mosh>/mosh-update.ps1"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/mosh.cmd" "$<TARGET_FILE_DIR:mosh>/mosh.cmd"
     VERBATIM)

@@ -13,6 +13,9 @@ name: windows
 
 on: [push, pull_request]
 
+permissions:
+  contents: read
+
 jobs:
   msvc:
     name: windows / msvc
@@ -70,7 +73,7 @@ jobs:
 
     # --no-tests=error: a configuration that registers nothing must fail rather
     # than report success, which is how a test suite quietly stops existing.
-    - name: unit tests
+    - name: unit tests and loopback sessions
       run: ctest --test-dir build -C RelWithDebInfo --output-on-failure --no-tests=error
 
     - name: the three binaries run
@@ -91,17 +94,17 @@ jobs:
           Write-Host "$name -> $(@($v)[0])"
         }
 
-    # The part the unit tests cannot reach. All six of them are pure
-    # computation; nothing in the suite touches win32detach, ptyhost_win32,
-    # socketio_win32 or the ConPTY. Starting a server does: it respawns itself
-    # detached, creates a pseudoconsole, launches a shell in it, binds a UDP
-    # socket, and relays the handshake back through a pipe. If any of that is
-    # broken, this step says so.
+    # Check the parent process's handshake and detach independently of the
+    # loopback sessions, including diagnostics when the child cannot start.
     - name: a server starts, hosts a shell and detaches
       run: |
         $ErrorActionPreference = 'Stop'
         $exe = Get-ChildItem -Path build -Recurse -Filter mosh-server.exe |
                Select-Object -First 1 -ExpandProperty FullName
+        $failure = & $exe new -i 127.0.0.1 -- no-such-mosh-test-command.exe 2>&1 | Out-String
+        if ($LASTEXITCODE -eq 0 -or $failure -match 'MOSH CONNECT' -or $failure -notmatch 'cannot run') {
+          throw "server reported an incorrect startup result for a missing command"
+        }
         $out = & $exe new -i 127.0.0.1 2>&1 | Out-String
         if ($out -notmatch 'MOSH CONNECT (\d+) ([A-Za-z0-9/+]{22})') {
           Write-Host "mosh-server printed:"
@@ -116,37 +119,29 @@ jobs:
         Write-Host "$($srv.Count) detached server(s) still running, as intended"
         $srv | Stop-Process -Force
 
-    # Build the release archive here rather than by hand. It was assembled
-    # manually for v0.2.0, and packaging/winget/README.md had already drifted
-    # away from describing what the manifests actually ship -- which is what a
-    # manual step does, given time. Produced on every run so it is exercised,
-    # not only when a tag makes it matter.
-    - name: assemble the release archive
+    - name: package the tested Windows binaries
+      id: package
       run: |
-        $ErrorActionPreference = 'Stop'
-        $stage = "stage\mosh"
-        New-Item -ItemType Directory -Path $stage -Force | Out-Null
-        foreach ($name in 'mosh.exe', 'mosh-client.exe', 'mosh-server.exe') {
-          $exe = Get-ChildItem -Path build -Recurse -Filter $name |
-                 Select-Object -First 1 -ExpandProperty FullName
-          if (-not $exe) { throw "$name was not built" }
-          Copy-Item $exe $stage
+        $version = 'dev'
+        if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -cmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') {
+          $version = $env:GITHUB_REF_NAME
         }
-        Copy-Item scripts\mosh.ps1, scripts\mosh.cmd, COPYING, README.windows.md $stage
-        # The layout the manifests name: one top-level mosh\ directory, so
-        # NestedInstallerFiles' mosh\mosh.exe resolves.
-        $expected = @('COPYING','README.windows.md','mosh-client.exe','mosh-server.exe','mosh.cmd','mosh.exe','mosh.ps1')
-        $got = (Get-ChildItem $stage | Select-Object -ExpandProperty Name | Sort-Object)
-        if (Compare-Object $expected $got) {
-          throw "archive contents drifted: got $($got -join ', ')"
-        }
-        Compress-Archive -Path $stage -DestinationPath mosh-windows-x64.zip -CompressionLevel Optimal
-        Write-Host ("SHA256 " + (Get-FileHash mosh-windows-x64.zip -Algorithm SHA256).Hash)
+        ./scripts/package-windows.ps1 -BuildDir build -OutDir dist -Version $version
+        "zip=dist/mosh-windows-x64-$version.zip" >> $env:GITHUB_OUTPUT
+
+    - name: install, upgrade and uninstall the release archive
+      shell: powershell
+      run: ./src/tests/windows-install.ps1 -Archive "${{ steps.package.outputs.zip }}"
+
+    - name: exercise the release updater
+      shell: powershell
+      run: ./src/tests/windows-update.ps1 -Archive "${{ steps.package.outputs.zip }}"
 
     - uses: actions/upload-artifact@v4
       with:
         name: mosh-windows-x64
-        path: mosh-windows-x64.zip
+        path: dist/
+        if-no-files-found: error
 
   cmake-posix:
     name: cmake / ${{ matrix.os }}
@@ -196,3 +191,45 @@ jobs:
       env:
         LC_ALL: ${{ startsWith(matrix.os, 'ubuntu') && 'C.UTF-8' || 'en_US.UTF-8' }}
       run: ctest --test-dir build --output-on-failure --no-tests=error --repeat until-pass:2
+
+  publish-windows:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [msvc, cmake-posix]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        name: mosh-windows-x64
+        path: dist
+    - name: publish verified Windows release assets
+      working-directory: dist
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG: ${{ github.ref_name }}
+        REPO: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || exit 0
+        zip="mosh-windows-x64-$TAG.zip"
+        sha256sum --check --strict SHA256SUMS
+        assets=( "$zip" mosh.exe mosh-client.exe mosh-server.exe SHA256SUMS )
+        if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+          gh release create "$TAG" --repo "$REPO" --verify-tag --draft --generate-notes --title "Mosh for Windows $TAG"
+        fi
+        if [[ $(gh release view "$TAG" --repo "$REPO" --json isDraft --jq .isDraft) == true ]]; then
+          gh release upload "$TAG" "${assets[@]}" --repo "$REPO" --clobber
+          gh release edit "$TAG" --repo "$REPO" --draft=false
+        else
+          # Support tags created from the Releases UI and reruns. Preserve
+          # existing public downloads and reject a rebuild with different bytes.
+          for file in "${assets[@]}"; do
+            digest=$(gh api "repos/$REPO/releases/tags/$TAG" --jq ".assets[] | select(.name == \"$file\") | .digest")
+            if [[ -z "$digest" ]]; then
+              gh release upload "$TAG" "$file" --repo "$REPO"
+            else
+              [[ "$digest" == "sha256:$(sha256sum "$file" | cut -d' ' -f1)" ]]
+            fi
+          done
+        fi

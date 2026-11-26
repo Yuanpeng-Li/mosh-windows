@@ -12,8 +12,7 @@
     when someone mosh-es *to* this machine, their client asks ssh to run
     "mosh-server", and a session started by sshd sees only PATH.
 
-    Uninstall:  mosh-uninstall   (dropped alongside), or delete the directory
-                and remove the PATH entry.
+    Uninstall:  mosh-uninstall   (dropped alongside).
 
     Parameters:
       -Version <tag>   install a specific release tag instead of the newest
@@ -37,6 +36,57 @@ function Info($m)  { Write-Host "  $m" }
 function Step($m)  { Write-Host "==> $m" -ForegroundColor Cyan }
 function Warn($m)  { Write-Host "!!  $m" -ForegroundColor Yellow }
 function Fail($m)  { Write-Host "!!  $m" -ForegroundColor Red; exit 1 }
+
+function Save-InstallState([string] $path, [hashtable] $state) {
+    $newState = Join-Path (Split-Path -Parent $path) ([IO.Path]::GetRandomFileName())
+    try {
+        $state | ConvertTo-Json | Set-Content -LiteralPath $newState -Encoding UTF8
+        if ([IO.File]::Exists($path)) {
+            [IO.File]::Replace($newState, $path, [System.Management.Automation.Language.NullString]::Value)
+        } else {
+            [IO.File]::Move($newState, $path)
+        }
+    } finally {
+        if ([IO.File]::Exists($newState)) { [IO.File]::Delete($newState) }
+    }
+}
+
+# Keep the installed path out of generated batch and PowerShell source.
+function Write-Uninstaller([string] $scriptPath, [string] $cmdPath) {
+@'
+$ErrorActionPreference = 'Stop'
+$stateFile = Join-Path $PSScriptRoot 'mosh-install.json'
+$state = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json
+if ($state.package -ne 'Yuanpeng-Li/mosh-windows') { throw 'Invalid mosh installation record' }
+foreach ($name in $state.files) {
+    if (!$name -or $name -in @('.', '..') -or [IO.Path]::GetFileName($name) -cne $name -or
+        $name.IndexOfAny([IO.Path]::GetInvalidFileNameChars()) -ge 0) {
+        throw "Invalid package file: $name"
+    }
+    $path = Join-Path $PSScriptRoot $name
+    if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force }
+}
+if ($state.pathEntry) {
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $entries = [Collections.Generic.List[string]]::new()
+    $entries.AddRange([string[]]($userPath -split ';'))
+    $index = $entries.FindLastIndex([Predicate[string]]{ param($entry) $entry -eq $state.pathEntry })
+    if ($index -ge 0) {
+        $entries.RemoveAt($index)
+        [Environment]::SetEnvironmentVariable('Path', ($entries -join ';'), 'User')
+    }
+}
+Remove-Item -LiteralPath (Join-Path $PSScriptRoot 'mosh-uninstall.cmd'), $PSCommandPath, $stateFile -Force
+if ($state.createdDirectory -and -not (Get-ChildItem -LiteralPath $PSScriptRoot -Force)) {
+    [IO.Directory]::Delete($PSScriptRoot, $false)
+}
+'@ | Set-Content -LiteralPath $scriptPath -Encoding UTF8
+@'
+@echo off
+rem Leave the batch context before PowerShell removes this file.
+(goto) 2>nul & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0mosh-uninstall.ps1"
+'@ | Set-Content -LiteralPath $cmdPath -Encoding ASCII
+}
 
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
 
@@ -63,74 +113,118 @@ if ($FromZip) {
     $tmpZip = (Resolve-Path -LiteralPath $FromZip).Path
     Info "Using $tmpZip"
 } else {
-    if (-not $Version) {
-        try {
-            $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -UseBasicParsing
-            $Version = $rel.tag_name
-        } catch {
-            Fail "could not reach the GitHub API to find the latest release -- $_"
-        }
-    }
+    $endpoint = if ($Version) { 'tags/' + [Uri]::EscapeDataString($Version) } else { 'latest' }
+    $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/$endpoint" -UseBasicParsing
+    $Version = $rel.tag_name
     Info "Release $Version"
-
     $arch = if ([Environment]::Is64BitOperatingSystem -and $env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
     $zipName = "mosh-windows-$arch-$Version.zip"
-    $zipUrl  = "https://github.com/$Repo/releases/download/$Version/$zipName"
+    $asset = @($rel.assets | Where-Object name -ceq $zipName)
+    if ($asset.Count -ne 1 -or $asset[0].digest -notmatch '^sha256:([0-9a-f]{64})$') {
+        throw "Release $Version has no verified $arch Windows archive."
+    }
+    $expected = $Matches[1]
+    $zipUrl = $asset[0].browser_download_url
 
     Step "Downloading $zipName"
     $tmpZip = Join-Path ([System.IO.Path]::GetTempPath()) ("mosh-" + [Guid]::NewGuid().ToString('N') + '.zip')
     try {
         Invoke-WebRequest -Uri $zipUrl -OutFile $tmpZip -UseBasicParsing
+        if ((Get-FileHash -LiteralPath $tmpZip -Algorithm SHA256).Hash -ne $expected) {
+            throw 'ZIP SHA-256 mismatch.'
+        }
     } catch {
-        Fail "could not download $zipUrl -- $_"
+        if (Test-Path -LiteralPath $tmpZip) { Remove-Item -LiteralPath $tmpZip -Force }
+        throw
     }
     $downloaded = $true
 }
 
 Step "Installing into $Dir"
-New-Item -ItemType Directory -Path $Dir -Force | Out-Null
+$createdDir = -not (Test-Path -LiteralPath $Dir)
+$Dir = (New-Item -ItemType Directory -Path $Dir -Force).FullName
+$stateFile = Join-Path $Dir 'mosh-install.json'
+$uninstallCmd = Join-Path $Dir 'mosh-uninstall.cmd'
+$uninstallScript = Join-Path $Dir 'mosh-uninstall.ps1'
+$ownedFiles = @()
+$ownedPath = $null
+$legacy = $false
+$previous = $null
+if (Test-Path -LiteralPath $stateFile) {
+    $previous = Get-Content -Raw -LiteralPath $stateFile | ConvertFrom-Json
+    if ($previous.package -ne $Repo) { throw "Unrecognized installation record at $stateFile" }
+    $ownedFiles = @($previous.files)
+    $createdDir = $previous.createdDirectory
+    $ownedPath = $previous.pathEntry
+} elseif (Test-Path -LiteralPath $uninstallCmd -PathType Leaf) {
+    # The earlier installer recorded neither PATH ownership nor whether it
+    # created the directory. Preserve both when upgrading such installs.
+    $legacy = (Get-Content -LiteralPath $uninstallCmd) -contains 'rem Uninstall the mosh launcher installed by install.ps1.'
+    if (-not $legacy) { throw "File already exists: $uninstallCmd" }
+}
+if ((Test-Path -LiteralPath $uninstallScript) -and -not $previous) {
+    throw "File already exists: $uninstallScript"
+}
 $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("mosh-x-" + [Guid]::NewGuid().ToString('N'))
 try {
     Expand-Archive -LiteralPath $tmpZip -DestinationPath $tmpDir -Force
     # The archive has a single top-level mosh\ directory.
     $src = Join-Path $tmpDir 'mosh'
     if (-not (Test-Path $src)) { $src = $tmpDir }
-    Get-ChildItem -LiteralPath $src -File | ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $Dir $_.Name) -Force
-        Info $_.Name
+    $packageFiles = @(Get-ChildItem -LiteralPath $src -File)
+    $legacyFiles = @('mosh.exe','mosh-client.exe','mosh-server.exe','mosh.cmd','mosh.ps1','COPYING','README.windows.md')
+    if (-not $packageFiles.Count) { throw "No package files in $tmpZip" }
+    foreach ($file in $packageFiles) {
+        $dest = Join-Path $Dir $file.Name
+        if ($dest -in @($stateFile, $uninstallScript, $uninstallCmd)) {
+            throw "Archive conflicts with the installer: $($file.Name)"
+        }
+        if (Test-Path -LiteralPath $dest) {
+            $wasOwned = $file.Name -in $ownedFiles -or ($legacy -and $file.Name -in $legacyFiles)
+            if (-not $wasOwned -or -not (Test-Path -LiteralPath $dest -PathType Leaf)) {
+                throw "File already exists: $dest"
+            }
+        }
+    }
+    $ownedFiles = @(($ownedFiles + $packageFiles.Name) | Sort-Object -Unique)
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $addPath = -not $NoPath -and (($userPath -split ';') -notcontains $Dir)
+    if ($ownedPath -and ($userPath -split ';') -notcontains $ownedPath) { $ownedPath = $null }
+    $state = @{
+        package = $Repo
+        files = $ownedFiles
+        createdDirectory = $createdDir
+        pathEntry = $ownedPath
+    }
+    # Publish the record before copying. A locked executable or interrupted
+    # upgrade can then be retried or uninstalled using the same ownership.
+    Save-InstallState $stateFile $state
+    Write-Uninstaller $uninstallScript $uninstallCmd
+    foreach ($file in $packageFiles) {
+        Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $Dir $file.Name) -Force
+        Info $file.Name
     }
 } finally {
     if ($downloaded) { Remove-Item -LiteralPath $tmpZip -Force -ErrorAction SilentlyContinue }
     Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-# A tiny uninstaller, so removing this is as easy as installing it.
-@"
-@echo off
-rem Uninstall the mosh launcher installed by install.ps1.
-echo Removing "$Dir" and its PATH entry.
-powershell -NoProfile -Command ^
-  "`$p=[Environment]::GetEnvironmentVariable('Path','User'); ^
-   `$p=(`$p -split ';' ^| Where-Object { `$_ -and `$_ -ne '$Dir' }) -join ';'; ^
-   [Environment]::SetEnvironmentVariable('Path',`$p,'User')"
-rmdir /s /q "$Dir"
-echo Done. Open a new terminal for the PATH change to take effect.
-"@ | Set-Content -Encoding ASCII (Join-Path $Dir 'mosh-uninstall.cmd')
-Info "mosh-uninstall.cmd"
-
 # ------------------------------------------------------------------- PATH --
 
-if (-not $NoPath) {
-    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-    if (($userPath -split ';') -notcontains $Dir) {
-        Step "Adding $Dir to your PATH"
-        $new = if ([string]::IsNullOrEmpty($userPath)) { $Dir } else { "$userPath;$Dir" }
-        [Environment]::SetEnvironmentVariable('Path', $new, 'User')
-        $env:Path = "$env:Path;$Dir"
-        Info "done (only the user PATH; the system PATH is untouched)"
-    } else {
-        Info "already on PATH"
+if ($addPath) {
+    Step "Adding $Dir to your PATH"
+    $new = if ([string]::IsNullOrEmpty($userPath)) { $Dir } else { "$userPath;$Dir" }
+    [Environment]::SetEnvironmentVariable('Path', $new, 'User')
+    try {
+        $state.pathEntry = $Dir
+        Save-InstallState $stateFile $state
+    } catch {
+        if ([Environment]::GetEnvironmentVariable('Path', 'User') -ceq $new) {
+            [Environment]::SetEnvironmentVariable('Path', $userPath, 'User')
+        }
+        throw
     }
+    $env:Path = "$env:Path;$Dir"
 }
 
 # --------------------------------------------------------------- firewall --

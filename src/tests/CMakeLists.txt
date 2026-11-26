@@ -56,6 +56,17 @@ else()
   message(STATUS "  base64 test   : skipped (no perl)")
 endif()
 
+if(WIN32 AND MOSH_BUILD_CLIENT AND MOSH_BUILD_SERVER)
+  add_executable(test-windows-session windows-session.cc)
+  target_link_libraries(test-windows-session PRIVATE moshutil)
+  foreach(mode IN ITEMS local remote dns)
+    add_test(NAME windows-session-${mode}
+      COMMAND test-windows-session ${mode} $<TARGET_FILE:mosh>
+              $<TARGET_FILE:mosh-client> $<TARGET_FILE:mosh-server>)
+    set_tests_properties(windows-session-${mode} PROPERTIES TIMEOUT 45)
+  endforeach()
+endif()
+
 # ----------------------------------------------------------- scripted -------
 # local.test and the display tests are the automake suite, run as-is: /bin/sh
 # scripts that expect automake's build layout. The CMake tree happens to have

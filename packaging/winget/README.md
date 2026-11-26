@@ -45,26 +45,16 @@ mosh user@host
 Cutting a new version
 ---------------------
 
-1. Do not build the archive by hand. `.github/workflows/windows.yml` assembles
-   it on every push, checks its contents against the list the manifests name,
-   and uploads it as the `mosh-windows-x64` artifact with its SHA-256 in the
-   log. Take that artifact.
-
-   The archive has one top-level `mosh\` directory — which is what makes
-   `NestedInstallerFiles`' `mosh\mosh.exe` resolve — containing `mosh.exe`,
-   `mosh-client.exe`, `mosh-server.exe`, `mosh.ps1`, `mosh.cmd`, `COPYING` and
-   `README.windows.md`.
-
-2. Rename it to `mosh-windows-x64-<tag>.zip` and attach it to the GitHub
-   release for `<tag>`.
-
-4. Copy the previous version directory to the new version number and update
-   `PackageVersion` in all three files, plus `InstallerUrl`, `InstallerSha256`
-   (uppercase hex) and `ReleaseDate` in the installer manifest.
-
-5. `winget validate`, then install from the local manifest and actually run
-   `mosh user@host` before publishing. A manifest can validate and still install
-   something that does not work.
+1. Push a stable Windows tag such as `vX.Y.Z` on the commit to release.
+   The Windows workflow builds the x64 binaries, tests sessions, installation
+   and self-update, then publishes a GitHub Release after the Windows and
+   POSIX jobs pass.
+2. The release contains `mosh-windows-x64-<tag>.zip`, the three compiled
+   executables individually, and `SHA256SUMS`. The ZIP keeps its top-level
+   `mosh/` folder for WinGet and includes the scripts and release version.
+3. Copy the previous WinGet manifest directory, set `PackageVersion` and
+   `ReleaseDate`, and use the versioned ZIP URL and its SHA-256 from the
+   release. Run `winget validate` and test an install before submitting.
 
 Submitting to the public winget repository
 ------------------------------------------
@@ -87,7 +77,7 @@ What review checks, and where this package stands:
 | SHA-256 matches | verified against the published asset |
 | manifest schema valid | `winget validate` passes |
 | installs and uninstalls cleanly | tested; portable alias `mosh` |
-| no bundled third-party binaries of unclear provenance | client is fetched, not bundled |
+| no bundled third-party binaries of unclear provenance | the binaries are built from the tagged source |
 | unsigned binary | `mosh.exe` is not code-signed — expect SmartScreen warnings, and a reviewer may ask |
 
 Code signing is the one gap. It needs a certificate; without one, SmartScreen

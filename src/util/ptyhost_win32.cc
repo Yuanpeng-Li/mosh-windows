@@ -144,10 +144,11 @@ struct PtyHost::Impl
   HANDLE to_child;   /* we write here; the pty reads */
   HANDLE from_child; /* the pty writes here; we read */
   HANDLE process;
-  bool child_gone;
+  HANDLE primary_thread;
+  HANDLE closer;
 
   Impl() : pty( NULL ), to_child( INVALID_HANDLE_VALUE ), from_child( INVALID_HANDLE_VALUE ), process( NULL ),
-           child_gone( false )
+           primary_thread( NULL ), closer( NULL )
   {}
 };
 
@@ -239,7 +240,7 @@ bool PtyHost::start( const std::vector<std::string>& args, int width, int height
 
      Named separately so the assertion has something to test, and so the next
      person to add a flag has to walk past this. */
-  const DWORD creation_flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT;
+  const DWORD creation_flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED;
   fatal_assert( 0 == ( creation_flags & ( CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_CONSOLE ) ) );
 
   const BOOL ok = CreateProcessW( NULL,
@@ -260,7 +261,7 @@ bool PtyHost::start( const std::vector<std::string>& args, int width, int height
     return false;
   }
 
-  CloseHandle( pi.hThread );
+  impl->primary_thread = pi.hThread;
   impl->process = pi.hProcess;
   return true;
 }
@@ -282,12 +283,31 @@ bool PtyHost::readable( const Select& sel ) const
   return impl->from_child != INVALID_HANDLE_VALUE && sel.read_handle( impl->from_child );
 }
 
-bool PtyHost::exited( const Select& sel ) const
+static DWORD WINAPI close_console( LPVOID console )
 {
-  if ( impl->child_gone ) {
+  ClosePseudoConsole( static_cast<HPCON>( console ) );
+  return 0;
+}
+
+bool PtyHost::finish_if_exited( const Select& sel )
+{
+  if ( !impl->process || !sel.read_handle( impl->process ) ) {
     return true;
   }
-  return impl->process != NULL && sel.read_handle( impl->process );
+  CloseHandle( impl->process );
+  impl->process = NULL;
+
+  /* Closing ConPTY flushes its last frame and finally delivers pipe EOF.
+     Older Windows builds wait for the reader during that flush. Keep the
+     event loop reading and sending frames while the close runs. */
+  impl->closer = CreateThread( NULL, 0, close_console, impl->pty, 0, NULL );
+  if ( impl->closer ) {
+    impl->pty = NULL; /* ownership transferred to the closer */
+  } else {
+    fprintf( stderr, "mosh-server: cannot flush final frame: %s\n", win_error( GetLastError() ).c_str() );
+    return false;
+  }
+  return true;
 }
 
 ssize_t PtyHost::read( char* buf, size_t len )
@@ -323,6 +343,9 @@ ssize_t PtyHost::read( char* buf, size_t len )
 
 int PtyHost::write( const char* buf, size_t len )
 {
+  if ( !impl->pty ) {
+    return 0; /* final output is being drained */
+  }
   size_t written = 0;
   while ( written < len ) {
     DWORD n = 0;
@@ -338,7 +361,7 @@ int PtyHost::write( const char* buf, size_t len )
 bool PtyHost::resize( int width, int height )
 {
   if ( impl->pty == NULL ) {
-    return false;
+    return true; /* final output is being drained */
   }
   COORD size;
   size.X = static_cast<SHORT>( width );
@@ -353,54 +376,43 @@ bool PtyHost::resize( int width, int height )
 
 void PtyHost::release( void )
 {
-  /* The child was never held back: there is no fork here, so it has been
-     running its own login session since start(). */
+  if ( impl->primary_thread ) {
+    if ( ResumeThread( impl->primary_thread ) == static_cast<DWORD>( -1 ) ) {
+      fprintf( stderr, "mosh-server: ResumeThread: %s\n", win_error( GetLastError() ).c_str() );
+      TerminateProcess( impl->process, 1 );
+    }
+    CloseHandle( impl->primary_thread );
+    impl->primary_thread = NULL;
+  }
 }
 
 void PtyHost::close( void )
 {
-  if ( impl->pty ) {
-    /* Drain whatever the pseudoconsole still has queued before closing it.
-       ClosePseudoConsole flushes, and a flush with a full output pipe and
-       nobody reading it blocks -- that is the documented way this call hangs.
-       We are the only reader, and by this point the loop has stopped reading,
-       so the precondition is ours to remove.
-
-       Bounded twice over: only what PeekNamedPipe says is already there, and
-       at most a fixed number of rounds. This is teardown; it must finish. */
-    for ( int round = 0; round < 64; round++ ) {
-      DWORD avail = 0;
-      if ( impl->from_child == INVALID_HANDLE_VALUE
-           || !PeekNamedPipe( impl->from_child, NULL, 0, NULL, &avail, NULL ) || avail == 0 ) {
-        break;
-      }
-      char scratch[4096];
-      DWORD want = avail < sizeof scratch ? avail : (DWORD)sizeof scratch;
-      DWORD got = 0;
-      if ( !ReadFile( impl->from_child, scratch, want, &got, NULL ) || got == 0 ) {
-        break;
-      }
-    }
-
-    /* Closes the pty and, with it, the child's console. This is what makes
-       the shell see end of input and exit. */
-    ClosePseudoConsole( impl->pty );
-    impl->pty = NULL;
-  }
-  if ( impl->to_child != INVALID_HANDLE_VALUE ) {
-    CloseHandle( impl->to_child );
-    impl->to_child = INVALID_HANDLE_VALUE;
+  if ( impl->primary_thread ) {
+    /* A client never connected to release this child. */
+    TerminateProcess( impl->process, 1 );
+    CloseHandle( impl->primary_thread );
+    impl->primary_thread = NULL;
   }
   if ( impl->from_child != INVALID_HANDLE_VALUE ) {
     CloseHandle( impl->from_child );
     impl->from_child = INVALID_HANDLE_VALUE;
   }
+  if ( impl->to_child != INVALID_HANDLE_VALUE ) {
+    CloseHandle( impl->to_child );
+    impl->to_child = INVALID_HANDLE_VALUE;
+  }
+  if ( impl->pty ) {
+    ClosePseudoConsole( impl->pty );
+    impl->pty = NULL;
+  }
+  if ( impl->closer ) {
+    WaitForSingleObject( impl->closer, INFINITE );
+    CloseHandle( impl->closer );
+    impl->closer = NULL;
+  }
   if ( impl->process ) {
-    /* Give the shell a moment to notice its console has gone before the
-       process handle is dropped. */
-    WaitForSingleObject( impl->process, 2000 );
     CloseHandle( impl->process );
     impl->process = NULL;
-    impl->child_gone = true;
   }
 }

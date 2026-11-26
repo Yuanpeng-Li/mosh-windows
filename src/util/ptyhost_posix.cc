@@ -84,12 +84,6 @@ bool PtyHost::readable( const Select& sel ) const
   return impl->master >= 0 && sel.read_handle( impl->master );
 }
 
-bool PtyHost::exited( const Select& ) const
-{
-  /* Arrives as end of file on the master instead. */
-  return false;
-}
-
 ssize_t PtyHost::read( char* buf, size_t len )
 {
   return ::read( impl->master, buf, len );

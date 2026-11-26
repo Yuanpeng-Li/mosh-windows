@@ -502,30 +502,9 @@ static int run_server( const char* desired_ip,
   network->set_verbose( verbose );
   Select::set_verbose( verbose );
 
-  /*
-   * If mosh-server is run on a pty, then typeahead may echo and break mosh.pl's
-   * detection of the MOSH CONNECT message.  Print it on a new line to bodge
-   * around that.
-   */
-#if !defined( _WIN32 )
-  if ( isatty( STDIN_FILENO ) ) {
-    puts( "\r\n" );
-  }
-#endif
-  printf( "MOSH CONNECT %s %s\n", network->port().c_str(), network->get_key().c_str() );
-  fflush( stdout );
-
 #if defined( _WIN32 )
-  /* This is already the detached copy; what stdout points at is the pipe the
-     launcher is reading, and ssh does not finish disconnecting until every
-     handle to it is gone. Hand it back now that the one line that had to
-     reach the launcher has. */
-  Win32Detach::release_stdio( verbose );
-
   {
-    /* What the POSIX child sets for itself between forkpty() and execvp().
-       There is no such window here -- the pty child is created already
-       running -- so it is set on this process, which the child inherits. */
+    /* Set the environment that the pseudoconsole child will inherit. */
     setenv( "TERM", ( colors == 256 ) ? "xterm-256color" : "xterm", 1 );
     setenv( "NCURSES_NO_UTF8_ACS", "1", 1 );
     unsetenv( "STY" );
@@ -543,6 +522,11 @@ static int run_server( const char* desired_ip,
       return 1;
     }
 
+    /* The parent treats this line as success and stops relaying errors. */
+    printf( "MOSH CONNECT %s %s\n", network->port().c_str(), network->get_key().c_str() );
+    fflush( stdout );
+    Win32Detach::release_stdio( verbose );
+
     try {
       serve( pty, terminal, *network, network_timeout, network_signaled_timeout );
     } catch ( const Network::NetworkException& e ) {
@@ -557,6 +541,16 @@ static int run_server( const char* desired_ip,
   fputs( "\n[mosh-server is exiting.]\n", stdout );
   return 0;
 #else
+  /*
+   * If mosh-server is run on a pty, then typeahead may echo and break mosh.pl's
+   * detection of the MOSH CONNECT message.  Print it on a new line to bodge
+   * around that.
+   */
+  if ( isatty( STDIN_FILENO ) ) {
+    puts( "\r\n" );
+  }
+  printf( "MOSH CONNECT %s %s\n", network->port().c_str(), network->get_key().c_str() );
+  fflush( stdout );
 
   /* don't let signals kill us */
   struct sigaction sa;
@@ -957,12 +951,11 @@ static void serve( PtyHost& pty,
         }
       }
 
-      if ( ( !network.shutdown_in_progress() ) && pty.exited( sel ) ) {
-        /* The command is gone. On POSIX this arrives as end of file below;
-           on Windows the pty's pipe stays open and this is the only sign. */
+#ifdef _WIN32
+      if ( !pty.finish_if_exited( sel ) ) {
         network.start_shutdown();
       }
-
+#endif
       if ( ( !network.shutdown_in_progress() ) && pty.readable( sel ) ) {
         /* input from the host needs to be fed to the terminal */
         const int buf_size = 16384;
