@@ -1,26 +1,56 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="218" viewBox="0 0 1000 218" role="img" aria-labelledby="title desc">
-  <title id="title">A Mosh session from Windows</title>
-  <desc id="desc">From PowerShell, mosh dev@lab opens a remote shell. SSH authenticates the user, then an encrypted UDP session carries the terminal updates.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1000 288" width="1000" height="288" role="img" aria-labelledby="title desc">
+  <title id="title">Mosh for Windows</title>
+  <desc id="desc">A laptop reaches the same remote shell over Wi-Fi and then over a hotspot.</desc>
   <defs>
-    <linearGradient id="bg" x2="1" y2="1" gradientUnits="objectBoundingBox"><stop stop-color="#101b31"/><stop offset="1" stop-color="#102d36"/></linearGradient>
+    <linearGradient id="night" x2="1" y2=".4" gradientUnits="objectBoundingBox">
+      <stop stop-color="#131b20"/><stop offset=".55" stop-color="#132524"/><stop offset="1" stop-color="#183335"/>
+    </linearGradient>
+    <pattern id="grid" width="25" height="25" patternUnits="userSpaceOnUse">
+      <path d="M25 0H0V25" fill="none" stroke="#79aaa0" stroke-opacity=".12"/>
+    </pattern>
+    <pattern id="phosphor" width="12" height="12" patternUnits="userSpaceOnUse">
+      <rect x="0.8" y="0.8" width="10.6" height="10.6" rx="1.5" fill="#c9f97b"/>
+    </pattern>
+    <path id="wifi" d="M545 139 C592 139 586 86 643 86 H749 C798 86 795 139 853 139"/>
+    <path id="cell" d="M545 139 C592 139 586 196 643 196 H749 C798 196 795 139 853 139"/>
+    <style>
+      .packet { stroke-dasharray: 8 510; animation: travel 6s linear 3; opacity: 0 }
+      .alternate { animation-delay: 3s }
+      @keyframes travel { 0% { stroke-dashoffset: 8; opacity: 0 } 3% { opacity: 1 }
+        44% { opacity: 1 } 49%,100% { stroke-dashoffset: -390; opacity: 0 } }
+      @media (prefers-reduced-motion: reduce) { .packet { animation: none } }
+    </style>
   </defs>
-  <rect width="1000" height="218" rx="16" fill="url(#bg)"/>
-  <g font-family="Consolas, 'Liberation Mono', monospace">
-    <rect x="26" y="25" width="535" height="168" rx="9" fill="#101723" stroke="#466376"/>
-    <path d="M27 66h533" stroke="#344858"/>
-    <path d="m48 41 7 6-7 6m11 0h8" fill="none" stroke="#7fe2de" stroke-width="2"/>
-    <text x="81" y="52" fill="#dce7ee" font-size="15">PowerShell</text>
-    <text x="50" y="111" fill="#86e3de" font-size="24">PS&gt; <tspan fill="#f4f7fa">mosh dev@lab</tspan></text>
-    <text x="50" y="155" fill="#a7d99e" font-size="22">dev@lab:~$</text>
-    <rect x="190" y="138" width="10" height="21" fill="#a7d99e"/>
+  <rect width="1000" height="288" rx="18" fill="url(#night)"/>
+  <rect x="1" y="1" width="998" height="286" rx="17" fill="url(#grid)" stroke="#315052"/>
+  <path d="M33 49V32h17m900 0h17v17M33 239v17h17m900 0h17v-17" fill="none" stroke="#638079" stroke-width="2"/>
+  <g transform="translate(60 60)" fill="url(#phosphor)">
+    <!-- Seven-row terminal lettering, on a 12-unit cell grid. -->
+    <path d="M0 0h12v12h12v12h12V12h12V0h12v84H48V36H36v12H24V36H12v48H0z"/>
+    <path fill-rule="evenodd" d="M84 0h36v12h12v60h-12v12H84V72H72V12h12z M84 12v60h36V12z"/>
+    <path d="M156 0h48v12h-48v24h36v12h12v24h-12v12h-48V72h48V48h-36V36h-12V12h12z"/>
+    <path d="M216 0h12v36h36V0h12v84h-12V48h-36v36h-12z"/>
   </g>
-  <g font-family="'Segoe UI', system-ui, sans-serif">
-    <path d="M610 77v62" stroke="#517b85" stroke-width="2"/>
-    <circle cx="610" cy="69" r="8" fill="#86e3de"/>
-    <circle cx="610" cy="144" r="8" fill="#a7d99e"/>
-    <text x="637" y="72" fill="#f1f6f9" font-size="23" font-weight="650">Sign in over SSH</text>
-    <text x="637" y="98" fill="#b8cdd2" font-size="17">Use your SSH key or password.</text>
-    <text x="637" y="148" fill="#f1f6f9" font-size="23" font-weight="650">Stay connected over UDP</text>
-    <text x="637" y="174" fill="#b8cdd2" font-size="17">Keep your shell when Wi-Fi changes.</text>
+  <text x="62" y="188" fill="#f1f3e9" font-family="Segoe UI, DejaVu Sans, sans-serif" font-size="36" font-weight="600">for Windows</text>
+  <g font-family="Consolas, DejaVu Sans Mono, monospace">
+    <text x="63" y="236" fill="#b1c6ba" font-size="18"><tspan fill="#c9f97b">PS&gt;</tspan> mosh dev@lab</text>
+    <g fill="none" stroke-linecap="round" stroke-width="3">
+      <use xlink:href="#wifi" stroke="#8cae68"/><use xlink:href="#cell" stroke="#569899"/>
+      <use xlink:href="#wifi" class="packet" stroke="#e8ffab" stroke-width="6"/>
+      <use xlink:href="#cell" class="packet alternate" stroke="#a5f1e9" stroke-width="6"/>
+    </g>
+    <text x="691" y="67" text-anchor="middle" fill="#d2eca7" font-size="18">Wi-Fi</text>
+    <text x="691" y="228" text-anchor="middle" fill="#a9ded9" font-size="18">Hotspot</text>
+    <g stroke="#d1e2cd" stroke-linejoin="round" stroke-width="2.5" fill="#1a2c2c">
+      <rect x="461" y="107" width="83" height="55" rx="5"/>
+      <path d="M461 164h83l9 7h-101z"/>
+      <path d="m479 128 8 7-8 7m13 0h12" stroke="#c9f97b" fill="none"/>
+      <rect x="853" y="107" width="72" height="65" rx="7"/>
+      <path d="M854 138h69m-58-17h22m-22 31h22" fill="none"/>
+      <circle cx="911" cy="122" r="3" stroke="none" fill="#c9f97b"/>
+      <circle cx="911" cy="153" r="3" stroke="none" fill="#c9f97b"/>
+    </g>
+    <text x="503" y="193" text-anchor="middle" fill="#c8d6cd" font-size="15">Client</text>
+    <text x="889" y="194" text-anchor="middle" fill="#c8d6cd" font-size="15">Server</text>
   </g>
 </svg>

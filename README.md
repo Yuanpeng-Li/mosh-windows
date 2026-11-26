@@ -1,51 +1,80 @@
-# Mosh for Windows
+<h1 align="center">
+  <img src="docs/images/windows-session.svg" width="100%" alt="Mosh for Windows. A laptop switches from Wi-Fi to a hotspot and stays connected to the same server.">
+</h1>
 
-[![Windows build and tests](https://github.com/Yuanpeng-Li/mosh-windows/actions/workflows/windows.yml/badge.svg?branch=windows)](https://github.com/Yuanpeng-Li/mosh-windows/actions/workflows/windows.yml)
-[![Latest Windows release](https://img.shields.io/github/v/release/Yuanpeng-Li/mosh-windows?label=Windows%20release&color=147d76)](https://github.com/Yuanpeng-Li/mosh-windows/releases/latest)
-[![License](https://img.shields.io/badge/license-GPL--3.0%2B-426079)](COPYING)
+<p align="center"><strong>Keep your remote shell when your network changes.</strong><br>
+Connect from PowerShell, or host a shell on your Windows PC. Both the Mosh client and server run natively.</p>
 
-Close your laptop on Wi-Fi, open it on a hotspot, and keep typing in the same remote shell. This native Windows port of Mosh lets you **connect from PowerShell or host a shell on your Windows PC**. On slow links, Mosh displays keystrokes locally when it can predict how the remote terminal will respond.
+<p align="center">
+  <a href="https://github.com/Yuanpeng-Li/mosh-windows/releases/latest"><img alt="Download Mosh for Windows x64" src="https://img.shields.io/badge/Download-Windows%20x64%20ZIP-c9f97b?style=for-the-badge&amp;labelColor=1b302e"></a>
+</p>
 
-![A PowerShell terminal running mosh dev@lab. SSH handles login, then UDP carries the roaming session.](docs/images/windows-session.svg)
+<p align="center">
+  <a href="#quick-start">Quick start</a> &nbsp;·&nbsp;
+  <a href="README.windows.md#connecting-in">Host on Windows</a> &nbsp;·&nbsp;
+  <a href="README.windows.md#troubleshooting">Troubleshooting</a> &nbsp;·&nbsp;
+  <a href="https://github.com/Yuanpeng-Li/mosh-windows/releases">Release notes</a>
+</p>
 
-**[Download for Windows x64](https://github.com/Yuanpeng-Li/mosh-windows/releases/latest)** · [Host a Windows session](README.windows.md#connecting-in) · [Troubleshooting](README.windows.md#troubleshooting)
+## Quick start
 
-## Your first session
+Download the **x64 ZIP** from the latest release, extract it, and open PowerShell in the extracted `mosh` folder. You'll need Windows 10 version 1809 or newer, or Windows 11.
 
-1. Download the **x64 ZIP** from the latest release. Extract the `mosh` folder and open PowerShell in it. The ZIP includes the launcher, scripts, client, and server. Windows 10 version 1809 or later and Windows 11 support the native terminal.
-2. Try a session on your own machine. At the new shell prompt, type `exit` to return.
-
-   ```powershell
-   .\mosh.exe --local localhost
-   ```
-
-3. Connect to a remote host that has SSH and `mosh-server` installed. The server needs inbound UDP on the selected port. Mosh picks a port from **60000–61000** by default.
-
-   ```powershell
-   .\mosh.exe dev@lab
-   ```
-
-To run `mosh` from any directory, use the [per-user installer](README.windows.md#install). It adds Mosh to your user PATH and includes an uninstaller.
-
-## Which machine needs what?
-
-| Connection | What to set up |
-| --- | --- |
-| **Windows → Linux or macOS** | Install this package on Windows and your distribution's Mosh package on the remote host. SSH aliases work with the default address discovery. |
-| **Windows → Windows** | Install this port on both machines. Enable OpenSSH Server and allow inbound UDP for `mosh-server.exe` on the host. [Windows host setup](README.windows.md#connecting-in) |
-| **Linux or macOS → Windows** | Keep your packaged Mosh client. Connect with `mosh --no-ssh-pty user@windows-box`, or install the [launcher that handles Windows automatically](README.windows.md#your-linux-or-macos-client-needs-one-thing). |
-
-For a firewall with one allowed UDP port, choose it explicitly. SSH keeps its own port setting.
+**Try it on one PC.** This opens a second shell through Mosh on your own machine. Type `exit` to return.
 
 ```powershell
-mosh -p 60010 dev@lab
-mosh --ssh="ssh -p 2222" dev@lab
-mosh dev@lab -- tmux attach
+.\mosh.exe --local localhost
 ```
 
-## Updates and release downloads
+**Connect to another machine.** Replace `dev@lab` with your SSH login. The host needs SSH, `mosh-server`, and an inbound UDP port in the default range **60000–61000**. SSH handles the login, then Mosh carries the terminal over encrypted UDP.
 
-Starting with the **first release after v0.2.0**, the launcher can check for and install stable updates. Run these commands from a PATH installation, or use `.\mosh.exe` in the extracted folder.
+```powershell
+.\mosh.exe dev@lab
+```
+
+Prefer to type `mosh` from any directory? The [per-user installer](README.windows.md#install) sets up your PATH and includes an uninstaller.
+
+## Try switching networks
+
+In the remote shell, print its process ID. Switch your **laptop** from Wi-Fi to a hotspot that can reach the same server. Once Mosh reconnects, run the command again. The same ID means you're still in the original shell, with its working directory and running programs.
+
+| If the remote prompt is… | Run before and after switching |
+| --- | --- |
+| PowerShell on Windows | `$PID` |
+| Bash or Zsh on Linux or macOS | `echo $$` |
+
+On a slow link, you can also see Mosh's local echo in action. It predicts ordinary keystrokes and reconciles the display when the server replies.
+
+## Choose your connection
+
+| From | To | Setup |
+| --- | --- | --- |
+| Windows | Linux or macOS | Install this port on the client and the distribution's Mosh package on the host. Connect with `mosh user@host`. [Client guide](README.windows.md#connecting-out) |
+| Windows | Windows | Install this port on both machines. Enable OpenSSH Server and allow inbound UDP for the host's `mosh-server.exe`. [Host setup](README.windows.md#connecting-in) |
+| Linux or macOS | Windows | Use your packaged client with `mosh --no-ssh-pty user@windows-box`. The [Unix launcher](README.windows.md#your-linux-or-macos-client-needs-one-thing) handles this automatically. |
+
+<details>
+<summary><strong>Connection recipes</strong> — SSH aliases, custom ports, and tmux</summary>
+
+After installing on PATH, you can use your usual SSH alias. Set the SSH port and the Mosh UDP port independently.
+
+```powershell
+mosh lab                         # Host lab in your SSH config
+mosh --ssh="ssh -p 2222" dev@lab # SSH login on TCP 2222
+mosh -p 60010 dev@lab            # Mosh traffic on UDP 60010
+```
+
+You can also attach to an existing tmux session on a Unix host.
+
+```powershell
+mosh dev@lab tmux attach
+```
+
+</details>
+
+## Updates
+
+The **first Windows release after v0.2.0** adds the built-in updater. If you're on v0.2.0 or earlier, install a newer ZIP once that release is available. After that, the launcher can check the latest stable version, verify its SHA-256, and update the scripts and executables together.
 
 ```powershell
 mosh --version
@@ -53,19 +82,27 @@ mosh update --check
 mosh update
 ```
 
-The updater verifies the release ZIP's SHA-256 and updates the programs and scripts together. If you have **v0.2.0 or earlier**, use the installer or extract a newer ZIP once to get the update command. WinGet-managed installations can also use `winget upgrade --id YuanpengLi.MoshWindows --exact`.
+In a portable installation, use `.\mosh.exe` in place of `mosh`. For a WinGet-managed install, use `winget upgrade --id YuanpengLi.MoshWindows --exact`.
 
-| Release download | Use it for |
+<details>
+<summary><strong>Which release file should I download?</strong></summary>
+
+| Asset | Purpose |
 | --- | --- |
-| **mosh-windows-x64-vX.Y.Z.zip** | A complete installation. Start here. |
-| **mosh.exe** | The launcher. Use it with the matching scripts from the ZIP. |
-| **mosh-client.exe** and **mosh-server.exe** | The native client and server, available individually for packaging and integration. |
-| **SHA256SUMS** | Verify a download with `Get-FileHash -Algorithm SHA256 <file>`. |
+| `mosh-windows-x64-vX.Y.Z.zip` | Complete installation with the matching programs and scripts. |
+| `mosh.exe` | Launcher for packagers. It needs the matching scripts from the ZIP. |
+| `mosh-client.exe` · `mosh-server.exe` | Individual native binaries for integration. |
+| `SHA256SUMS` | Compare a download's digest with `Get-FileHash -Algorithm SHA256 <file>`. |
 
-The individual executables and checksum file are included from the first release after v0.2.0. [Browse releases](https://github.com/Yuanpeng-Li/mosh-windows/releases)
+Individual EXEs and checksums ship alongside the ZIP starting with the first release after v0.2.0.
 
-## Build or contribute
+</details>
 
-The Windows build uses MSVC, CMake, vcpkg, and the Windows pseudoconsole (ConPTY). The test suite covers terminal and protocol behavior as well as Windows loopback sessions. For bug reports, include your Windows build, `mosh --version`, and which machine was the client. [Windows build instructions](README.windows.md#build-it-yourself) · [CMake options](docs/cmake-build.md) · [Report an issue](https://github.com/Yuanpeng-Li/mosh-windows/issues)
+## Development
+
+The Windows port uses **MSVC, CMake, vcpkg, and ConPTY**. The tests exercise the terminal, protocol, and Windows loopback sessions. When reporting a problem, include your Windows build, the output of `mosh --version`, and which machine was the client.
+
+[![Windows build and tests](https://github.com/Yuanpeng-Li/mosh-windows/actions/workflows/windows.yml/badge.svg?branch=windows)](https://github.com/Yuanpeng-Li/mosh-windows/actions/workflows/windows.yml)
+[Build on Windows](README.windows.md#build-it-yourself) · [CMake options](docs/cmake-build.md) · [Report an issue](https://github.com/Yuanpeng-Li/mosh-windows/issues)
 
 Mosh was created by Keith Winstein and the Mosh developers. This independent fork adds native Windows support and retains the upstream GPLv3-or-later license and OpenSSL linking exception. [Upstream Mosh](https://mosh.org/) · [Source](https://github.com/mobile-shell/mosh) · [License](COPYING)
