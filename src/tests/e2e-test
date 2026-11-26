@@ -233,8 +233,10 @@ for run in $server_tests; do
 	test_error "tmux failure on test %s\n" "$run"
     fi
     # Check for mosh failures
-    if ! grep -q "@@@ exitstatus: 0 @@@" "${test_dir}/${run}.tmux.log"; then
-	test_error "mosh-client had non-zero exitstatus\n"
+    if ! read -r client_rv < "${test_dir}/${run}.client.exitstatus"; then
+	test_error "missing client exit status during %s\n" "$run"
+    elif [ "$client_rv" != 0 ]; then
+	test_error "client exited with status %s during %s\n" "$client_rv" "$run"
     fi
 
     # Check for server harness failures

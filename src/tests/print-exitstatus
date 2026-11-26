@@ -1,14 +1,14 @@
 #!/usr/bin/env perl
 
 #
-# Print exitstatus on stderr.
+# Record the wrapped command's status before tmux closes the pane.
 #
 use warnings;
 use strict;
 
 my $rc = system(@ARGV);
 if ($? == -1) {
-    die "system failed: %!\n";
+    die "system failed: $!\n";
 }
 if ($? == 0) {
     $rc = 0;
@@ -17,17 +17,8 @@ if ($? == 0) {
 } else {
     $rc = ($? & 127) | 128;
 }
-print STDERR "@@@ exitstatus: ${rc} @@@\n";
-# Now look for it in log file.
-my $grepfilename = $ENV{'MOSH_E2E_TEST'} . ".tmux.log";
-for my $i (1..600) {
-    open(my $grepfile, "<", $grepfilename) or die;
-    while (<$grepfile>) {
-	chomp;
-	/@@@ exitstatus: .* @@@/ && goto gotit;
-    }
-    close($grepfile);
-    sleep .1;
-}
- gotit:
+my $path = $ENV{'MOSH_E2E_TEST'} . ".client.exitstatus";
+open(my $status, ">", $path) or die "open $path: $!";
+print {$status} "$rc\n" or die "write $path: $!";
+close($status) or die "close $path: $!";
 exit $rc;

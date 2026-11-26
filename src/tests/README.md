@@ -107,7 +107,9 @@ into the invocations of the respective commands.
 
 Each execution action is run, and recorded in
 `<testname>.test.d/<action>.*`. `<action>.exitstatus` is the
-exitstatus from the server wrapper.  `<action>.tmux.log` is the output
+exit status from the server wrapper.  `<action>.client.exitstatus`
+records the exit status of the command run inside the tmux pane.
+`<action>.tmux.log` is the output
 of tmux for the entire test run for that action; `<action>.capture` is
 a capture of the Mosh client screen after the test action is complete,
 generated with `tmux capture-pane`.
