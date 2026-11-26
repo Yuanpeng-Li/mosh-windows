@@ -33,6 +33,7 @@
 #ifndef TERMINALFB_HPP
 #define TERMINALFB_HPP
 
+#include <algorithm>
 #include <cassert>
 #include <climits>
 #include <cstdint>
@@ -524,8 +525,14 @@ public:
 
   bool operator==( const Framebuffer& x ) const
   {
-    return ( rows == x.rows ) && ( window_title == x.window_title ) && ( clipboard == x.clipboard )
-           && ( bell_count == x.bell_count ) && ( ds == x.ds );
+    /* Writing a character and backing up over it can detach a shared row
+       without changing any cells. Comparing only pointers keeps scheduling
+       a send even though the display diff is empty. */
+    return ( ds == x.ds ) && ( bell_count == x.bell_count ) && ( window_title == x.window_title )
+           && ( icon_name == x.icon_name ) && ( clipboard == x.clipboard ) && ( rows.size() == x.rows.size() )
+           && std::equal( rows.begin(), rows.end(), x.rows.begin(), []( const row_pointer& a, const row_pointer& b ) {
+                return a == b || a->cells == b->cells;
+              } );
   }
 };
 }

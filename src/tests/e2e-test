@@ -255,9 +255,8 @@ for run in $server_tests; do
 	fi
 	# Check for 0-timeout select() issue
 	if egrep -q "(polls, rate limiting|consecutive polls)" "${test_dir}/${run}.server.stderr"; then
-	    if [ "osx" != "${TRAVIS_OS_NAME}" ]; then
-		test_error "select() with zero timeout called too often on server during %s\n" "$run"
-	    fi
+	    grep -E '^(select: got [0-9]+|\[[0-9]+\] (Sent|Received))' "${test_dir}/${run}.server.stderr" | tail -40 >&2
+	    test_error "select() with zero timeout called too often on server during %s\n" "$run"
 	fi
 	# Check for assert()
 	if egrep -q "assertion.*failed" "${test_dir}/${run}.server.stderr"; then

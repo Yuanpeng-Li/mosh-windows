@@ -54,10 +54,11 @@ wait_for_clients 2
 eval "$@"
 testret=$?
 # Capture mosh-server runtime if possible.
-runtime=$(ps -o time= $PPID 2>/dev/null)
+runtime=$(LC_ALL=C ps -p "$MOSH_SERVER_PID" -o time= 2>/dev/null)
 if [ $? -ne 0 ]; then # Cygwin...
     runtime=-
 fi
+printf '%s\n' "$runtime" > "$testname.cputime"
 # Wait for tmux client screen to become up to date.
 sleep 1
 printf "@@@ server complete @@@" >&2

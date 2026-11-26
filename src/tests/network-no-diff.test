@@ -30,22 +30,22 @@ baseline()
 
 post()
 {
-    # Extract server run time.
-    runtime=$(sed -E -n 's/.*@@@ runtime: (.*) @@@.*/\1/p' "$(basename "$0").d/baseline.tmux.log")
-
-    # If this system can't actually report runtime, bail.
-    if [ -z "$runtime" ] || [ "$runtime" -eq "-" ]; then
-	exit 0
-    fi
-
-    # If we ran for more than one second, fail.
-    seconds=${runtime##*:}
-    bigger=${runtime%:*}
-    onesec=$(echo "$seconds >= 1" | bc)
-    if [ "$onesec" -eq 1 ] || [ "$bigger" -ne 0 ]; then
-	exit 1
-    fi
-    exit 0
+    # Read ps directly from the harness: tmux can split a marker across
+    # output records. Darwin reports M:SS.hh; Linux uses [D-]HH:MM:SS.
+    file="$(basename "$0").d/baseline.cputime"
+    LC_ALL=C awk '
+        NR == 1 && NF == 1 && $1 == "-" { unsupported = 1; next }
+        NR == 1 && NF == 1 && $1 ~ /^([0-9]+-)?([0-9]+:)?[0-9]+:[0-9]+([.][0-9]+)?$/ {
+            measured = $1
+            n = split($1, parts, /[-:]/)
+            for (i = 1; i <= n; ++i) if (parts[i] + 0 >= 1) over_limit = 1
+        }
+        END {
+            if (NR == 1 && unsupported) { print "ps cannot report server CPU time"; exit 77 }
+            if (NR != 1 || !length(measured)) { print "Invalid server CPU time in " FILENAME; exit 99 }
+            if (over_limit) { print "Server used " measured " CPU time (limit: 1 second)"; exit 1 }
+        }
+    ' "$file"
 }
 
 case $1 in

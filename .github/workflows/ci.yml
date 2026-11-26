@@ -20,11 +20,11 @@ jobs:
 
     - name: "setup linux build environment"
       if: ${{ startsWith(matrix.os, 'ubuntu') }}
-      run: sudo apt update && sudo apt install -y protobuf-compiler libprotobuf-dev libutempter-dev autoconf automake nettle-dev
+      run: sudo apt update && sudo apt install -y protobuf-compiler libprotobuf-dev libutempter-dev autoconf automake nettle-dev tmux
 
     - name: "setup macos build environment"
       if: ${{ startsWith(matrix.os, 'macos') }}
-      run: brew install protobuf automake
+      run: brew install protobuf automake tmux
 
     - name: "generate build scripts"
       run: ./autogen.sh
