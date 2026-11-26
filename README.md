@@ -3,7 +3,8 @@
 </h1>
 
 <p align="center"><strong>Keep your remote shell when your network changes.</strong><br>
-Connect from PowerShell, or host a shell on your Windows PC. Both the Mosh client and server run natively.</p>
+Mosh for Windows is an independently maintained port of <a href="https://mosh.org/">Mosh</a>.<br>
+Connect from PowerShell with the native client, or host a shell on your Windows PC with the native server.</p>
 
 <p align="center">
   <a href="https://github.com/Yuanpeng-Li/mosh-windows/releases/latest"><img alt="Download Mosh for Windows x64" src="https://img.shields.io/badge/Download-Windows%20x64%20ZIP-c9f97b?style=for-the-badge&amp;labelColor=1b302e"></a>
@@ -13,7 +14,8 @@ Connect from PowerShell, or host a shell on your Windows PC. Both the Mosh clien
   <a href="#quick-start">Quick start</a> &nbsp;·&nbsp;
   <a href="README.windows.md#connecting-in">Host on Windows</a> &nbsp;·&nbsp;
   <a href="README.windows.md#troubleshooting">Troubleshooting</a> &nbsp;·&nbsp;
-  <a href="https://github.com/Yuanpeng-Li/mosh-windows/releases">Release notes</a>
+  <a href="https://github.com/Yuanpeng-Li/mosh-windows/releases">Release notes</a> &nbsp;·&nbsp;
+  <a href="https://github.com/Yuanpeng-Li/mosh-windows/issues/new?template=windows-bug.md">Report a Windows bug</a>
 </p>
 
 ## Quick start
@@ -74,7 +76,7 @@ mosh dev@lab tmux attach
 
 ## Updates
 
-The **first Windows release after v0.2.0** adds the built-in updater. If you're on v0.2.0 or earlier, install a newer ZIP once that release is available. After that, the launcher can check the latest stable version, verify its SHA-256, and update the scripts and executables together.
+The built-in updater ships with **v0.3.0 and later**. If you're on v0.2.0 or earlier, rerun the installer or extract the latest ZIP once. You can then check for new Windows releases and update the programs and scripts together. The launcher verifies the ZIP's SHA-256 before installing it.
 
 ```powershell
 mosh --version
@@ -94,15 +96,17 @@ In a portable installation, use `.\mosh.exe` in place of `mosh`. For a WinGet-ma
 | `mosh-client.exe` · `mosh-server.exe` | Individual native binaries for integration. |
 | `SHA256SUMS` | Compare a download's digest with `Get-FileHash -Algorithm SHA256 <file>`. |
 
-Individual EXEs and checksums ship alongside the ZIP starting with the first release after v0.2.0.
+Individual EXEs and checksums are available from v0.3.0 onward.
 
 </details>
 
 ## Development
 
-The Windows port uses **MSVC, CMake, vcpkg, and ConPTY**. The tests exercise the terminal, protocol, and Windows loopback sessions. When reporting a problem, include your Windows build, the output of `mosh --version`, and which machine was the client.
+The Windows port uses **MSVC, CMake, vcpkg, and ConPTY**. The tests exercise the terminal, protocol, and Windows loopback sessions.
+
+This repository maintains the Windows client, server, installer, and updater. When preparing a release, review upstream Mosh fixes and check connections in both directions between Windows and a packaged Linux or macOS Mosh installation.
 
 [![Windows build and tests](https://github.com/Yuanpeng-Li/mosh-windows/actions/workflows/windows.yml/badge.svg?branch=windows)](https://github.com/Yuanpeng-Li/mosh-windows/actions/workflows/windows.yml)
-[Build on Windows](README.windows.md#build-it-yourself) · [CMake options](docs/cmake-build.md) · [Report an issue](https://github.com/Yuanpeng-Li/mosh-windows/issues)
+[Build on Windows](README.windows.md#build-it-yourself) · [CMake options](docs/cmake-build.md) · [Browse Windows issues](https://github.com/Yuanpeng-Li/mosh-windows/issues)
 
 Mosh was created by Keith Winstein and the Mosh developers. This independent fork adds native Windows support and retains the upstream GPLv3-or-later license and OpenSSL linking exception. [Upstream Mosh](https://mosh.org/) · [Source](https://github.com/mobile-shell/mosh) · [License](COPYING)

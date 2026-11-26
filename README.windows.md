@@ -107,8 +107,8 @@ installation. If replacement fails, the updater restores the previous files.
 After an interrupted update, run `mosh update` again. Use `mosh -- update` to
 connect to a host literally named `update`.
 
-For v0.2.0 and earlier, install a newer ZIP or rerun the installer once after
-a release containing the updater becomes available. For a WinGet installation,
+For v0.2.0 and earlier, extract the latest ZIP or rerun the installer once
+to get the updater. For a WinGet installation,
 use `winget upgrade --id YuanpengLi.MoshWindows --exact`.
 
 ### Uninstall
