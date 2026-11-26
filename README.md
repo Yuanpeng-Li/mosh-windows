@@ -1,219 +1,71 @@
-> **This is a fork.** It adds a native Windows port (MSVC / CMake / ConPTY)
-> to Mosh. See [README.windows.md](README.windows.md). Upstream Mosh is at
-> https://github.com/mobile-shell/mosh — this tree is a modified version and
-> is not endorsed by or affiliated with the upstream project.
+# Mosh for Windows
 
-[![ci](https://github.com/mobile-shell/mosh/actions/workflows/ci.yml/badge.svg)](https://github.com/mobile-shell/mosh/actions/workflows/ci.yml)
+[![Windows build and tests](https://github.com/Yuanpeng-Li/mosh-windows/actions/workflows/windows.yml/badge.svg?branch=windows)](https://github.com/Yuanpeng-Li/mosh-windows/actions/workflows/windows.yml)
+[![Latest Windows release](https://img.shields.io/github/v/release/Yuanpeng-Li/mosh-windows?label=Windows%20release&color=147d76)](https://github.com/Yuanpeng-Li/mosh-windows/releases/latest)
+[![License](https://img.shields.io/badge/license-GPL--3.0%2B-426079)](COPYING)
 
-Mosh: the mobile shell
-======================
+Close your laptop on Wi-Fi, open it on a hotspot, and keep typing in the same remote shell. This native Windows port of Mosh lets you **connect from PowerShell or host a shell on your Windows PC**. On slow links, Mosh displays keystrokes locally when it can predict how the remote terminal will respond.
 
-Mosh is a remote terminal application that supports intermittent
-connectivity, allows roaming, and provides speculative local echo
-and line editing of user keystrokes.
+![A PowerShell terminal running mosh dev@lab. SSH handles login, then UDP carries the roaming session.](docs/images/windows-session.svg)
 
-It aims to support the typical interactive uses of SSH, plus:
+**[Download for Windows x64](https://github.com/Yuanpeng-Li/mosh-windows/releases/latest)** · [Host a Windows session](README.windows.md#connecting-in) · [Troubleshooting](README.windows.md#troubleshooting)
 
-   * Mosh keeps the session alive if the client goes to sleep and
-     wakes up later, or temporarily loses its Internet connection.
+## Your first session
 
-   * Mosh allows the client and server to "roam" and change IP
-     addresses, while keeping the connection alive. Unlike SSH, Mosh
-     can be used while switching between Wi-Fi networks or from Wi-Fi
-     to cellular data to wired Ethernet.
+1. Download the **x64 ZIP** from the latest release. Extract the `mosh` folder and open PowerShell in it. The ZIP includes the launcher, scripts, client, and server. Windows 10 version 1809 or later and Windows 11 support the native terminal.
+2. Try a session on your own machine. At the new shell prompt, type `exit` to return.
 
-   * The Mosh client runs a predictive model of the server's behavior
-     in the background and tries to guess intelligently how each
-     keystroke will affect the screen state. When it is confident in
-     its predictions, it will show them to the user while waiting for
-     confirmation from the server. Most typing and uses of the left-
-     and right-arrow keys can be echoed immediately.
+   ```powershell
+   .\mosh.exe --local localhost
+   ```
 
-     As a result, Mosh is usable on high-latency links, e.g. on a
-     cellular data connection or spotty Wi-Fi. In distinction from
-     previous attempts at local echo modes in other protocols, Mosh
-     works properly with full-screen applications such as emacs, vi,
-     alpine, and irssi, and automatically recovers from occasional
-     prediction errors within an RTT. On high-latency links, Mosh
-     underlines its predictions while they are outstanding and removes
-     the underline when they are confirmed by the server.
+3. Connect to a remote host that has SSH and `mosh-server` installed. The server needs inbound UDP on the selected port. Mosh picks a port from **60000–61000** by default.
 
-Mosh does not support X forwarding or the non-interactive uses of SSH,
-including port forwarding.
+   ```powershell
+   .\mosh.exe dev@lab
+   ```
 
-Other features
---------------
+To run `mosh` from any directory, use the [per-user installer](README.windows.md#install). It adds Mosh to your user PATH and includes an uninstaller.
 
-   * Mosh adjusts its frame rate so as not to fill up network queues
-     on slow links, so "Control-C" always works within an RTT to halt
-     a runaway process.
+## Which machine needs what?
 
-   * Mosh warns the user when it has not heard from the server
-     in a while.
+| Connection | What to set up |
+| --- | --- |
+| **Windows → Linux or macOS** | Install this package on Windows and your distribution's Mosh package on the remote host. SSH aliases work with the default address discovery. |
+| **Windows → Windows** | Install this port on both machines. Enable OpenSSH Server and allow inbound UDP for `mosh-server.exe` on the host. [Windows host setup](README.windows.md#connecting-in) |
+| **Linux or macOS → Windows** | Keep your packaged Mosh client. Connect with `mosh --no-ssh-pty user@windows-box`, or install the [launcher that handles Windows automatically](README.windows.md#your-linux-or-macos-client-needs-one-thing). |
 
-   * Mosh supports lossy links that lose a significant fraction
-     of their packets.
+For a firewall with one allowed UDP port, choose it explicitly. SSH keeps its own port setting.
 
-   * Mosh handles some Unicode edge cases better than SSH and existing
-     terminal emulators by themselves, but requires a UTF-8
-     environment to run.
-
-   * Mosh leverages SSH to set up the connection and authenticate
-     users. Mosh does not contain any privileged (root) code.
-
-Getting Mosh
-------------
-
-  [The Mosh web site](https://mosh.org/#getting) has information about
-  packages for many operating systems, as well as instructions for building
-  from source.
-
-  Note that `mosh-client` receives an AES session key as an environment
-  variable.  If you are porting Mosh to a new operating system, please make
-  sure that a running process's environment variables are not readable by other
-  users.  We have confirmed that this is the case on GNU/Linux, OS X, and
-  FreeBSD.
-
-Usage
------
-
-  The `mosh-client` binary must exist on the user's machine, and the
-  `mosh-server` binary on the remote host.
-
-  The user runs:
-
-    $ mosh [user@]host
-
-  If the `mosh-client` or `mosh-server` binaries live outside the user's
-  `$PATH`, `mosh` accepts the arguments `--client=PATH` and `--server=PATH` to
-  select alternate locations. More options are documented in the mosh(1) manual
-  page.
-
-  There are [more examples](https://mosh.org/#usage) and a
-  [FAQ](https://mosh.org/#faq) on the Mosh web site.
-
-How it works
-------------
-
-  The `mosh` program will SSH to `user@host` to establish the connection.
-  SSH may prompt the user for a password or use public-key
-  authentication to log in.
-
-  From this point, `mosh` runs the `mosh-server` process (as the user)
-  on the server machine. The server process listens on a high UDP port
-  and sends its port number and an AES-128 secret key back to the
-  client over SSH. The SSH connection is then shut down and the
-  terminal session begins over UDP.
-
-  If the client changes IP addresses, the server will begin sending
-  to the client on the new IP address within a few seconds.
-
-  To function, Mosh requires UDP datagrams to be passed between client
-  and server. By default, `mosh` uses a port number between 60000 and
-  61000, but the user can select a particular port with the -p option.
-  Please note that the -p option has no effect on the port used by SSH.
-
-Advice to distributors
-----------------------
-
-A note on compiler flags: Mosh is security-sensitive code. When making
-automated builds for a binary package, we recommend passing the option
-`--enable-compile-warnings=error` to `./configure`. On GNU/Linux with
-`g++` or `clang++`, the package should compile cleanly with
-`-Werror`. Please report a bug if it doesn't.
-
-Where available, Mosh builds with a variety of binary hardening flags
-such as `-fstack-protector-all`, `-D_FORTIFY_SOURCE=2`, etc.  These
-provide proactive security against the possibility of a memory
-corruption bug in Mosh or one of the libraries it uses.  For a full
-list of flags, search for `HARDEN` in `configure.ac`.  The `configure`
-script detects which flags are supported by your compiler, and enables
-them automatically.  To disable this detection, pass
-`--disable-hardening` to `./configure`.  Please report a bug if you
-have trouble with the default settings; we would like as many users as
-possible to be running a configuration as secure as possible.
-
-Mosh ships with a default optimization setting of `-O2`. Some
-distributors have asked about changing this to `-Os` (which causes a
-compiler to prefer space optimizations to time optimizations). We have
-benchmarked with the included `src/examples/benchmark` program to test
-this. The results are that `-O2` is 40% faster than `-Os` with g++ 4.6
-on GNU/Linux, and 16% faster than `-Os` with clang++ 3.1 on Mac OS
-X. In both cases, `-Os` did produce a smaller binary (by up to 40%,
-saving almost 200 kilobytes on disk). While Mosh is not especially CPU
-intensive and mostly sits idle when the user is not typing, we think
-the results suggest that `-O2` (the default) is preferable.
-
-Our Debian and Fedora packaging presents Mosh as a single package.
-Mosh has a Perl dependency that is only required for client use.  For
-some platforms, it may make sense to have separate mosh-server and
-mosh-client packages to allow mosh-server usage without Perl.
-
-Notes for developers
---------------------
-
-To start contributing to Mosh, install the following dependencies:
-
-Debian, Windows Subsystem for Linux:
-
-```
-$ sudo apt install -y build-essential protobuf-compiler \
-    libprotobuf-dev pkg-config libutempter-dev zlib1g-dev libncurses5-dev \
-    libssl-dev bash-completion tmux less
+```powershell
+mosh -p 60010 dev@lab
+mosh --ssh="ssh -p 2222" dev@lab
+mosh dev@lab -- tmux attach
 ```
 
-Fedora, RHEL:
+## Updates and release downloads
 
-```
-$ sudo dnf group install development-tools
-$ sudo dnf install automake protobuf-compiler protobuf-devel libutempter-devel \
-    zlib-ng-compat-devel ncurses-devel openssl-devel bash-completion tmux less \
-    perl-diagnostics
-```
+Starting with the **first release after v0.2.0**, the launcher can check for and install stable updates. Run these commands from a PATH installation, or use `.\mosh.exe` in the extracted folder.
 
-MacOS:
-
-```
-$ brew install protobuf automake
+```powershell
+mosh --version
+mosh update --check
+mosh update
 ```
 
-Once you have forked the repository, run the following to build and test Mosh:
+The updater verifies the release ZIP's SHA-256 and updates the programs and scripts together. If you have **v0.2.0 or earlier**, use the installer or extract a newer ZIP once to get the update command. WinGet-managed installations can also use `winget upgrade --id YuanpengLi.MoshWindows --exact`.
 
-```
-$ ./autogen.sh
-$ ./configure
-$ make
-$ make check
-```
+| Release download | Use it for |
+| --- | --- |
+| **mosh-windows-x64-vX.Y.Z.zip** | A complete installation. Start here. |
+| **mosh.exe** | The launcher. Use it with the matching scripts from the ZIP. |
+| **mosh-client.exe** and **mosh-server.exe** | The native client and server, available individually for packaging and integration. |
+| **SHA256SUMS** | Verify a download with `Get-FileHash -Algorithm SHA256 <file>`. |
 
-Mosh supports producing code coverage reports by tests, but this feature is
-disabled by default. To enable it, make sure `lcov` is installed on your
-system. Then, configure and run tests:
+The individual executables and checksum file are included from the first release after v0.2.0. [Browse releases](https://github.com/Yuanpeng-Li/mosh-windows/releases)
 
-```
-$ ./configure --enable-code-coverage
-$ make check-code-coverage
-```
+## Build or contribute
 
-This will run all tests and produce a coverage report in HTML form that can be
-opened with your favorite browser. Ideally, newly added code should strive for
-90% (or better) incremental test coverage.
+The Windows build uses MSVC, CMake, vcpkg, and the Windows pseudoconsole (ConPTY). The test suite covers terminal and protocol behavior as well as Windows loopback sessions. For bug reports, include your Windows build, `mosh --version`, and which machine was the client. [Windows build instructions](README.windows.md#build-it-yourself) · [CMake options](docs/cmake-build.md) · [Report an issue](https://github.com/Yuanpeng-Li/mosh-windows/issues)
 
-More info
----------
-
-  * Mosh Web site:
-
-    <https://mosh.org>
-
-  * `mosh-devel@mit.edu` mailing list:
-
-    <https://mailman.mit.edu/mailman/listinfo/mosh-devel>
-
-  * `mosh-users@mit.edu` mailing list:
-
-    <https://mailman.mit.edu/mailman/listinfo/mosh-users>
-
-  * `#mosh` channel on [Libera Chat](https://libera.chat/)
-
-    https://web.libera.chat/#mosh
+Mosh was created by Keith Winstein and the Mosh developers. This independent fork adds native Windows support and retains the upstream GPLv3-or-later license and OpenSSL linking exception. [Upstream Mosh](https://mosh.org/) · [Source](https://github.com/mobile-shell/mosh) · [License](COPYING)

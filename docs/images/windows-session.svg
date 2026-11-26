@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="218" viewBox="0 0 1000 218" role="img" aria-labelledby="title desc">
+  <title id="title">A Mosh session from Windows</title>
+  <desc id="desc">From PowerShell, mosh dev@lab opens a remote shell. SSH authenticates the user, then an encrypted UDP session carries the terminal updates.</desc>
+  <defs>
+    <linearGradient id="bg" x2="1" y2="1" gradientUnits="objectBoundingBox"><stop stop-color="#101b31"/><stop offset="1" stop-color="#102d36"/></linearGradient>
+  </defs>
+  <rect width="1000" height="218" rx="16" fill="url(#bg)"/>
+  <g font-family="Consolas, 'Liberation Mono', monospace">
+    <rect x="26" y="25" width="535" height="168" rx="9" fill="#101723" stroke="#466376"/>
+    <path d="M27 66h533" stroke="#344858"/>
+    <path d="m48 41 7 6-7 6m11 0h8" fill="none" stroke="#7fe2de" stroke-width="2"/>
+    <text x="81" y="52" fill="#dce7ee" font-size="15">PowerShell</text>
+    <text x="50" y="111" fill="#86e3de" font-size="24">PS&gt; <tspan fill="#f4f7fa">mosh dev@lab</tspan></text>
+    <text x="50" y="155" fill="#a7d99e" font-size="22">dev@lab:~$</text>
+    <rect x="190" y="138" width="10" height="21" fill="#a7d99e"/>
+  </g>
+  <g font-family="'Segoe UI', system-ui, sans-serif">
+    <path d="M610 77v62" stroke="#517b85" stroke-width="2"/>
+    <circle cx="610" cy="69" r="8" fill="#86e3de"/>
+    <circle cx="610" cy="144" r="8" fill="#a7d99e"/>
+    <text x="637" y="72" fill="#f1f6f9" font-size="23" font-weight="650">Sign in over SSH</text>
+    <text x="637" y="98" fill="#b8cdd2" font-size="17">Use your SSH key or password.</text>
+    <text x="637" y="148" fill="#f1f6f9" font-size="23" font-weight="650">Stay connected over UDP</text>
+    <text x="637" y="174" fill="#b8cdd2" font-size="17">Keep your shell when Wi-Fi changes.</text>
+  </g>
+</svg>
